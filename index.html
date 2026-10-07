@@ -35,7 +35,12 @@
             padding: 8px 14px; cursor: pointer; text-shadow: inherit; text-decoration: none;
         }
         .btn:hover, .btn:focus-visible { background: rgba(255, 106, 213, 0.25); outline: none; }
-        #rec_btn { margin-top: 10px; }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn.primary { color: #20001c; background: #ff6ad5; text-shadow: none; }
+        .btn.primary:hover:not(:disabled), .btn.primary:focus-visible { background: #ff9be3; }
+        .ui-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+        #photo_btn { font-size: 16px; padding: 10px 22px; }
+        #folder_btn { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
         /* Hitung mundur */
         #countdown {
@@ -44,38 +49,35 @@
             color: #fff; font-size: 180px; font-weight: bold; text-shadow: 0 0 30px #ff6ad5;
         }
 
-        /* Indikator rekam (tidak ikut terekam, karena DOM bukan canvas) */
-        #rec_indicator {
-            position: absolute; top: 20px; left: 50%; transform: translateX(-50%); z-index: 130; display: none;
-            color: #fff; font-weight: bold; font-size: 16px; letter-spacing: 2px;
-            background: rgba(0, 0, 0, 0.55); border: 1px solid #ff3b3b; padding: 8px 14px 10px; min-width: 180px; text-align: center;
-        }
-        #rec_indicator .dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; background: #ff3b3b; margin-right: 8px; animation: blink 0.8s infinite; }
-        #rec_bar { height: 3px; background: #ff3b3b; width: 0; margin-top: 6px; }
-        @keyframes blink { 50% { opacity: 0.2; } }
+        /* Kilat kamera saat foto diambil */
+        #flash { position: absolute; inset: 0; z-index: 150; background: #fff; opacity: 0; pointer-events: none; transition: opacity 0.4s ease-out; }
+        #flash.on { opacity: 0.85; transition: none; }
 
-        /* Modal hasil video + QR */
-        #video_modal {
+        /* Modal foto + form data. Tanpa backdrop-filter: blur di atas canvas yang terus berubah itu berat. */
+        #photo_modal {
             position: absolute; inset: 0; z-index: 200; display: none;
-            align-items: center; justify-content: center;
-            background: rgba(0, 0, 0, 0.65); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            align-items: center; justify-content: center; background: rgba(8, 0, 7, 0.9);
         }
-        #video_modal.open { display: flex; }
+        #photo_modal.open { display: flex; }
         .modal-card {
             display: flex; gap: 24px; align-items: center; flex-wrap: wrap; justify-content: center;
-            max-width: 92vw; padding: 24px; color: #ff6ad5; text-shadow: 0 0 10px #ff6ad5;
-            background: rgba(16, 0, 14, 0.9); border: 1px solid #ff6ad5; box-shadow: 0 0 40px rgba(255, 106, 213, 0.3);
+            max-width: 94vw; max-height: 94vh; overflow: auto; padding: 24px; color: #ff6ad5; text-shadow: 0 0 10px #ff6ad5;
+            background: #10000e; border: 1px solid #ff6ad5; box-shadow: 0 0 40px rgba(255, 106, 213, 0.3);
         }
-        #video_preview { max-width: min(56vw, 720px); max-height: 70vh; border: 1px solid rgba(255, 106, 213, 0.5); background: #000; }
-        .qr-side { display: flex; flex-direction: column; align-items: center; gap: 12px; width: 260px; text-align: center; font-weight: bold; }
-        #qr_box {
-            width: 240px; height: 240px; background: #fff; display: flex; text-shadow: none;
-            align-items: center; justify-content: center; color: #20001c; font-size: 12px; padding: 8px; box-sizing: border-box;
+        #photo_preview { max-width: min(60vw, 960px); max-height: 74vh; border: 1px solid rgba(255, 106, 213, 0.5); background: #000; }
+        .form-side { display: flex; flex-direction: column; gap: 8px; width: 330px; font-weight: bold; }
+        #photo_title { font-size: 16px; letter-spacing: 2px; margin-bottom: 4px; }
+        .form-side label { font-size: 13px; letter-spacing: 1px; margin-top: 6px; }
+        .form-side input {
+            font-family: inherit; font-size: 20px; font-weight: bold; padding: 12px; color: #fff; text-shadow: none;
+            background: #1d0a1a; border: 1px solid #ff6ad5; border-radius: 0; outline: none;
         }
-        #qr_box img { width: 100%; height: 100%; image-rendering: pixelated; }
-        #upload_status { font-size: 13px; min-height: 32px; }
-        #modal_timer { font-size: 10px; color: #ffb3ec; }
-        .modal-actions { display: flex; gap: 8px; }
+        .form-side input:focus { border-color: #fff; box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.35); }
+        .form-side input[aria-invalid="true"] { border-color: #ff5c5c; }
+        #form_error { min-height: 36px; color: #ff8a8a; font-size: 13px; text-shadow: none; line-height: 1.4; }
+        #file_hint { min-height: 16px; font-size: 11px; color: #ffb3ec; word-break: break-all; text-shadow: none; }
+        .modal-actions { display: flex; gap: 10px; margin-top: 6px; }
+        .modal-actions .btn { flex: 1; font-size: 16px; padding: 14px 10px; }
     </style>
 </head>
 <body>
@@ -90,38 +92,40 @@
             HEART HANDS: HEART EYES<br>
             TRIANGLE HANDS: HAT<br>
             F SIGN (1 HAND): BINUS CELEBRATION<br>
-            PEACE SIGN (&#9996;): HOLD TO RECORD 3s VIDEO<br>
+            PEACE SIGN (&#9996;): HOLD TO TAKE PHOTO<br>
             R-FIST + L-OPEN: NEXT STYLE | L-FIST + R-OPEN: PREV STYLE<br>
-            KEYS: [1][2][3] TOGGLE &nbsp;[B] BINUS &nbsp;[V] REC &nbsp;[&larr;][&rarr;] STYLE &nbsp;[H] SKELETON &nbsp;[X] CLEAR
+            KEYS: [1][2][3] TOGGLE &nbsp;[B] BINUS &nbsp;[V] FOTO &nbsp;[&larr;][&rarr;] STYLE &nbsp;[H] SKELETON &nbsp;[X] CLEAR
         </div>
-        <button id="rec_btn" class="btn" type="button">[ REC 3s VIDEO ]</button>
+        <div class="ui-actions">
+            <button id="photo_btn" class="btn primary" type="button">[ FOTO ]</button>
+            <button id="folder_btn" class="btn" type="button" title="Folder tempat foto disimpan">FOLDER: PILIH</button>
+        </div>
     </div>
 
     <video id="input_video" autoplay playsinline muted></video>
     <canvas id="stage"></canvas>
     <div id="toast" role="status" aria-live="polite"></div>
     <div id="countdown" aria-live="assertive"></div>
-    <div id="rec_indicator" aria-live="polite"><span class="dot"></span><span id="rec_text">REC 3.0s</span><div id="rec_bar"></div></div>
+    <div id="flash"></div>
 
-    <div id="video_modal" role="dialog" aria-modal="true" aria-labelledby="modal_title">
-        <div class="modal-card">
-            <video id="video_preview" autoplay loop muted playsinline aria-label="Recorded 3 second filter video"></video>
-            <div class="qr-side">
-                <div id="modal_title">FILTER_CAPTURE: COMPLETE</div>
-                <div id="qr_box">GENERATING...</div>
-                <div id="upload_status" aria-live="polite">UPLOADING...</div>
+    <div id="photo_modal" role="dialog" aria-modal="true" aria-labelledby="photo_title">
+        <form class="modal-card" id="photo_form" novalidate autocomplete="off">
+            <img id="photo_preview" alt="Preview foto">
+            <div class="form-side">
+                <div id="photo_title">FOTO // ISI DATA DULU</div>
+                <label for="in_name">NAMA LENGKAP</label>
+                <input id="in_name" name="name" type="text" maxlength="80" autocomplete="off" spellcheck="false" placeholder="Contoh: Jessi Tan">
+                <label for="in_phone">NO HP</label>
+                <input id="in_phone" name="phone" type="tel" inputmode="numeric" maxlength="15" autocomplete="off" placeholder="08xxxxxxxxxx">
+                <div id="form_error" role="alert" aria-live="polite"></div>
+                <div id="file_hint"></div>
                 <div class="modal-actions">
-                    <a id="save_local" class="btn" download>SAVE LOCAL</a>
-                    <button id="close_modal" class="btn" type="button">CLOSE [ESC]</button>
+                    <button id="cancel_photo" class="btn" type="button">BATAL [ESC]</button>
+                    <button id="save_photo" class="btn primary" type="submit" disabled>SIMPAN</button>
                 </div>
-                <div id="modal_timer"></div>
             </div>
-        </div>
+        </form>
     </div>
-
-    <script src="config.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 
     <script>
         // ================== CONFIG ==================
@@ -138,7 +142,8 @@
             HAT_OFFSET: 0.0,        // geser topi vertikal (x lebar kepala), negatif = naik, positif = lebih menutup dahi
             HAT_SCALE: 1.08,        // ukuran topi relatif ke kepala (naikkan kalau rambut samping masih terlihat)
             HAT_YAW_SHIFT: 0.5,     // koreksi posisi topi saat kepala menoleh
-            FACE_LERP: 0.55,
+            FACE_LERP: 0.7,         // filter noise per hasil deteksi wajah
+            FACE_SMOOTH_MS: 45,     // interpolasi per frame render -> aksesoris bergerak halus 60fps, bukan loncat per deteksi
             HAND_LERP: 0.55,
             FACE_TIMEOUT: 700,      // ms aksesoris tetap tampil saat wajah hilang sebentar
             HAND_TIMEOUT: 500,      // tangan bertahan saat model miss beberapa frame
@@ -148,36 +153,33 @@
             HAND_DET_CONF: 0.35,
             HAND_PRES_CONF: 0.35,
             HAND_TRACK_CONF: 0.40,
-            VISION_INTERVAL_MS: 40, // inference ~25fps; render tetap mengikuti refresh display
+            VISION_INTERVAL_MS: 14, // jarak minimum antar inference; otomatis melebar kalau model lambat
+            VISION_HEADROOM: 1.5,   // jeda antar inference >= durasi inference x nilai ini (sisakan waktu untuk render)
             FAR_HAND_DETECTION: true,
-            FAR_HAND_EVERY: 4,      // 1 crop tangan jauh tiap 4 tick vision agar tidak membebani rekaman
             HAND_CROP_SIZE: 320,
+            // ---- Kamera ----
+            CAMERA_W: 1280,         // 720p: preview tajam, jauh lebih ringan dari 1080p untuk render + inference
+            CAMERA_H: 720,
+            CAMERA_FPS: 30,
+            MAX_DPR: 1.5,           // batas resolusi canvas di layar HiDPI (canvas 2x = 4x piksel per frame)
             // ---- Deteksi wajah jauh / ramai (tiled multi-scale inference) ----
-            CAMERA_W: 1920,         // resolusi kamera lebih tinggi = wajah jauh punya lebih banyak piksel
-            CAMERA_H: 1080,
             FAR_DETECTION: true,
             SCAN_TILES: [0.5, 0.3], // ukuran tile scan (x lebar video). 0.3 = zoom ~3.3x untuk wajah sangat jauh
             CROP_SIZE: 320,         // resolusi crop yang dikirim ke model
             FAR_TRACK_ZOOM: 3.2,    // crop pelacak = lebar wajah x nilai ini
-            CROPS_PER_FRAME: 3,     // maks crop per frame (otomatis turun kalau FPS berat)
-            VISION_BUDGET_MS: 28,   // target waktu deteksi per frame; lebih dari ini -> crop dikurangi
             FACE_CONFIRM_HITS: 2,   // wajah baru tampil setelah terdeteksi 2x (buang false positive)
             FACE_NMS: 0.5,          // dua track lebih dekat dari ini (x lebar wajah) = wajah yang sama, digabung
             // Sign F -> confetti + tulisan BINUS
             F_EYE_CLEAR: 1.3,       // lingkaran jempol-telunjuk harus sejauh ini dari mata (x jarak mata), supaya beda dari gesture kacamata
-            PARTY_DURATION: 5000,   // ms tulisan tampil setelah sign F (diperpanjang selama sign F ditahan)
+            PARTY_DURATION: 10000,  // ms tulisan tampil setelah sign F (berbasis waktu, bukan jumlah frame; diperpanjang selama sign F ditahan)
             PARTY_FADE: 700,        // ms fade out
-            LOGO_HEAD_WIDTH: 3.4,   // lebar tulisan = lebar kepala x nilai ini (min 60%, maks 92% lebar layar)
+            LOGO_HEAD_WIDTH: 3.0,   // lebar tulisan = lebar kepala x nilai ini (35%-75% lebar layar, mengecil kalau ruang di atas kepala sempit)
             CONFETTI_RAIN: 45,      // confetti per detik yang jatuh dari atas selama aktif
             MAX_CONFETTI: 600,
-            // Rekam video
+            // Foto
             CAPTURE_HOLD: 1200,     // ms tahan peace sign untuk mulai countdown
-            COUNTDOWN: 3,           // detik hitung mundur sebelum rekam
-            REC_SECONDS: 3,         // durasi video
-            REC_LONG_SIDE: 1080,    // kompromi kualitas + encoding lebih ringan
-            REC_FPS: 30,
-            REC_BITRATE: 4000000,   // bitrate cukup tajam tanpa membebani encoder
-            MODAL_TIMEOUT: 60       // detik, modal QR otomatis tertutup
+            COUNTDOWN: 3,           // detik hitung mundur sebelum foto
+            PHOTO_QUALITY: 0.95     // kualitas JPEG
         };
 
         const VISION_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1';
@@ -188,7 +190,9 @@
         // ================== DOM ==================
         const video = document.getElementById('input_video');
         const canvas = document.getElementById('stage');
-        const ctx = canvas.getContext('2d');
+        // desynchronized = low-latency canvas (frame langsung ke layar), alpha:false = tanpa blending ke halaman
+        const mainCtx = canvas.getContext('2d', { alpha: false, desynchronized: true }) || canvas.getContext('2d');
+        let ctx = mainCtx;          // fungsi gambar memakai ctx; ditukar sementara saat merender foto
         const modeEl = document.getElementById('mode');
         const toastEl = document.getElementById('toast');
         const statEls = { glasses: document.getElementById('st_glasses'), hearts: document.getElementById('st_hearts'), hat: document.getElementById('st_hat') };
@@ -200,7 +204,7 @@
         const mid = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
         function resize() {
-            dpr = Math.min(2, window.devicePixelRatio || 1);
+            dpr = Math.min(CFG.MAX_DPR, window.devicePixelRatio || 1);
             W = window.innerWidth; H = window.innerHeight;
             canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
             computeLayout();
@@ -802,7 +806,7 @@
             { name: 'ROUND CLASSIC', draw: drawRoundGlasses },
             { name: 'AVIATOR GOLD', draw: drawAviator },
             { name: 'HEART PINK', draw: drawHeartGlasses },
-            { name: 'CYBER VISOR', draw: drawCyberVisor },
+            { name: 'CYBER VISOR', draw: drawCyberVisor, animated: true },
             { name: 'PIXEL THUG', draw: drawPixelThug }
         ];
         const HEART_STYLES = [
@@ -814,13 +818,13 @@
         ];
         const HATS = [
             { name: 'FEDORA', draw: drawFedora },
-            { name: 'ROYAL CROWN', draw: drawRoyalCrown },
+            { name: 'ROYAL CROWN', draw: drawRoyalCrown, animated: true },
             { name: 'BEANIE', draw: drawBeanie },
             { name: 'BASEBALL CAP', draw: drawCap },
             { name: 'COWBOY', draw: drawCowboy }
         ];
         const STYLES = { glasses: GLASSES, hearts: HEART_STYLES, hat: HATS };
-        const LABEL = { glasses: 'GLASSES', hearts: 'HEART EYES', hat: 'HAT', binus: 'BINUS', capture: 'REC VIDEO' };
+        const LABEL = { glasses: 'GLASSES', hearts: 'HEART EYES', hat: 'HAT', binus: 'BINUS', capture: 'FOTO' };
         const GESTURE_COLOR = { glasses: '#00f0ff', hearts: '#ff1744', hat: '#ffd400', next: '#ffffff', prev: '#ffffff', binus: '#ffc107', capture: '#ff3b3b' };
 
         const active = { glasses: false, hearts: false, hat: false };
@@ -938,20 +942,21 @@
                 let best = null, bd = Infinity;
                 faceTracks.forEach(t => {
                     if (used.has(t) || now - t.time > CFG.FACE_TIMEOUT) return;
-                    const d = D(mid(t.pts.eL, t.pts.eR), c);
+                    const d = D(mid(t.tgt.eL, t.tgt.eR), c);    // cocokkan ke posisi deteksi terakhir, bukan posisi tampilan yang tertinggal
                     if (d < bd) { bd = d; best = t; }
                 });
                 if (best && bd < size * 0.7) {
+                    // Deteksi hanya memperbarui TARGET; posisi tampilan (pts) mengejar target tiap frame di smoothFaces()
                     Object.keys(raw).forEach(k => {
-                        best.pts[k].x += (raw[k].x - best.pts[k].x) * CFG.FACE_LERP;
-                        best.pts[k].y += (raw[k].y - best.pts[k].y) * CFG.FACE_LERP;
+                        best.tgt[k].x += (raw[k].x - best.tgt[k].x) * CFG.FACE_LERP;
+                        best.tgt[k].y += (raw[k].y - best.tgt[k].y) * CFG.FACE_LERP;
                     });
                     best.time = now;
                     best.hits++;
                     if (src === 'full') best.fullTime = now;
                     used.add(best);
                 } else if (faceTracks.length < CFG.MAX_TRACKS) {
-                    const t = { id: nextFaceId++, pts: raw, time: now, hits: 1, fullTime: src === 'full' ? now : 0, heartAcc: 0 };
+                    const t = { id: nextFaceId++, tgt: raw, pts: clonePts(raw), time: now, hits: 1, fullTime: src === 'full' ? now : 0, heartAcc: 0 };
                     faceTracks.push(t);
                     used.add(t);
                 }
@@ -960,10 +965,27 @@
             mergeDuplicateTracks();
         }
 
+        function clonePts(p) {
+            const o = {};
+            Object.keys(p).forEach(k => { o[k] = { x: p[k].x, y: p[k].y }; });
+            return o;
+        }
+
+        // Interpolasi berbasis waktu (bukan per frame) -> halus dan sama cepatnya di 30/60/144 Hz
+        function smoothFaces(dtMs) {
+            const a = 1 - Math.exp(-dtMs / CFG.FACE_SMOOTH_MS);
+            faceTracks.forEach(t => {
+                Object.keys(t.tgt).forEach(k => {
+                    t.pts[k].x += (t.tgt[k].x - t.pts[k].x) * a;
+                    t.pts[k].y += (t.tgt[k].y - t.pts[k].y) * a;
+                });
+            });
+        }
+
         // NMS antar track: deteksi dari full frame + tile + crop bisa menghasilkan 2 track untuk 1 wajah
         function mergeDuplicateTracks() {
-            const center = t => mid(t.pts.eL, t.pts.eR);
-            const width = t => D(t.pts.sL, t.pts.sR) || 1;
+            const center = t => mid(t.tgt.eL, t.tgt.eR);
+            const width = t => D(t.tgt.sL, t.tgt.sR) || 1;
             for (let i = 0; i < faceTracks.length; i++) {
                 for (let j = faceTracks.length - 1; j > i; j--) {
                     const a = faceTracks[i], b = faceTracks[j];
@@ -997,7 +1019,7 @@
             const fc = mid(f.sL, f.sR);
             const yaw = (f.nose.x - fc.x) * ux + (f.nose.y - fc.y) * uy;
             return {
-                eL: f.eL, eR: f.eR, top: f.top,
+                eL: f.eL, eR: f.eR, top: f.top, chinY: f.chin.y,
                 cx: (f.eL.x + f.eR.x) / 2, cy: (f.eL.y + f.eR.y) / 2,
                 angle, eye: D(f.eL, f.eR), width, head,
                 hatX: f.top.x - ux * yaw * CFG.HAT_YAW_SHIFT,
@@ -1373,14 +1395,30 @@
             if (faces.length === 1) {
                 fg = faces[0];
             } else {
-                fg = faces.reduce((best, f) =>
+                const central = faces.reduce((best, f) =>
                     Math.abs(f.cx - W / 2) < Math.abs(best.cx - W / 2) ? f : best
                 );
+                // Hysteresis: tetap di orang sebelumnya kecuali orang lain JELAS lebih di tengah,
+                // supaya tulisan tidak loncat-loncat antara dua orang yang sama-sama dekat tengah.
+                const cur = faces.find(f => f.id === party.faceId);
+                fg = (cur && Math.abs(cur.cx - W / 2) - Math.abs(central.cx - W / 2) < W * 0.08) ? cur : central;
             }
             party.faceId = fg.id;
             const tx = fg.hatX, ty = fg.hatY - fg.head * (active.hat ? 1.1 : 0.72);
-            if (!party.seen) { party.x = tx; party.y = ty; party.seen = true; }
+            // Batas aman: puncak kepala tertinggi (termasuk topi kalau aktif) & dagu terendah dari SEMUA orang,
+            // supaya tulisan tidak pernah menutupi wajah siapa pun.
+            const lim = { top: Infinity, bottom: -Infinity, left: Infinity, right: -Infinity, midY: 0 };
+            const halfW = active.hat ? 1.0 : 0.6;          // setengah lebar kepala (+ lebar topi kalau aktif)
+            faces.forEach(f => {
+                lim.top = Math.min(lim.top, f.top.y - f.head * (active.hat ? 0.8 : 0.1));
+                lim.bottom = Math.max(lim.bottom, f.chinY + f.head * 0.05);
+                lim.left = Math.min(lim.left, f.cx - f.head * halfW);
+                lim.right = Math.max(lim.right, f.cx + f.head * halfW);
+                lim.midY += f.cy / faces.length;
+            });
+            if (!party.seen) { party.x = tx; party.y = ty; party.lim = { ...lim }; party.seen = true; }
             party.x += (tx - party.x) * 0.25; party.y += (ty - party.y) * 0.25;
+            Object.keys(lim).forEach(k => { party.lim[k] += (lim[k] - party.lim[k]) * 0.25; });
             party.headW = fg.head;
         }
 
@@ -1389,14 +1427,9 @@
             let alpha = 1;
             if (now > party.until) alpha = 1 - (now - party.until) / CFG.PARTY_FADE;
             if (alpha <= 0) return;
-            // Besar: ikut ukuran kepala, minimal 60% dan maksimal 92% lebar layar
-            const w = Math.min(W * 0.92, Math.max(W * 0.6, (party.headW || W * 0.3) * CFG.LOGO_HEAD_WIDTH));
-            const h = w * LOGO_H / LOGO_W;
+            const { cx, cy: cy0, w, h } = partyLayout();
             const s = easeOutBack(Math.min(1, t / 0.55));
-            const bob = Math.sin(t * 3) * h * 0.02;
-            // Tepi bawah tulisan di anchor; jaga supaya tidak keluar layar
-            let cx = Math.min(W - w / 2 - 8, Math.max(w / 2 + 8, party.x));
-            let cy = Math.max(h / 2 + 8, party.y - h / 2) + bob;
+            const cy = cy0 + Math.sin(t * 3) * h * 0.02;
             ctx.save();
             ctx.globalAlpha = alpha;
             ctx.translate(cx, cy); ctx.rotate(Math.sin(t * 2) * 0.025 - 0.02); ctx.scale(s, s);
@@ -1411,21 +1444,105 @@
             ctx.restore();
         }
 
+        // Posisi & ukuran tulisan BINUS (koordinat layar, tanpa animasi)
+        function partyLayout() {
+            // Ukuran ikut kepala, 35%-75% lebar layar (tidak terlalu besar)
+            const ratio = LOGO_H / LOGO_W, margin = Math.max(8, H * 0.025);
+            let w = Math.min(W * 0.75, Math.max(W * 0.35, (party.headW || W * 0.3) * CFG.LOGO_HEAD_WIDTH));
+            let h = w * ratio, cx, cy;
+            if (!party.seen) {
+                cx = W / 2; cy = Math.max(margin + h / 2, H * 0.22);
+            } else {
+                // Prioritas: atas kepala -> (dikecilkan) atas kepala -> bawah dagu -> samping grup.
+                // 0.88 = sisa ruang untuk animasi pop (overshoot) + goyang.
+                const L = party.lim, minW = W * 0.22;
+                const roomAbove = (L.top - margin * 2) * 0.88;            // tinggi tersedia
+                const roomBelow = (H - L.bottom - margin * 2) * 0.88;
+                const roomLeft = (L.left - margin * 2) * 0.88;            // lebar tersedia
+                const roomRight = (W - L.right - margin * 2) * 0.88;
+                const fitsV = room => room / ratio >= minW;
+                if (h <= roomAbove || fitsV(roomAbove)) {
+                    h = Math.min(h, roomAbove); w = h / ratio;
+                    cx = party.x;
+                    cy = Math.min(party.y, L.top - margin) - h / 2;       // tepi bawah tulisan di atas kepala tertinggi
+                } else if (fitsV(roomBelow)) {
+                    h = Math.min(h, roomBelow); w = h / ratio;
+                    cx = party.x;
+                    cy = L.bottom + margin + h / 2;                       // tepi atas tulisan di bawah dagu terendah
+                } else if (Math.max(roomLeft, roomRight) >= minW) {
+                    const left = roomLeft >= roomRight;
+                    w = Math.min(w, left ? roomLeft : roomRight); h = w * ratio;
+                    cx = left ? L.left - margin - w / 2 : L.right + margin + w / 2;
+                    cy = L.midY;
+                } else {
+                    // Wajah memenuhi seluruh frame: tidak ada tempat kosong. Pakai ukuran terkecil di sisi terluas.
+                    w = minW; h = w * ratio;
+                    cx = party.x;
+                    cy = roomAbove >= roomBelow ? margin + h / 2 : H - margin - h / 2;
+                }
+            }
+            // Jangan pernah keluar frame
+            cx = Math.min(W - w / 2 - margin, Math.max(w / 2 + margin, cx));
+            cy = Math.min(H - h / 2 - margin, Math.max(h / 2 + margin, cy));
+            return { cx, cy, w, h };
+        }
+
         // ================== RENDER ==================
-        function drawGlasses(fg, t) {
+        // Kacamata/topi statis di-render SEKALI ke sprite offscreen. Sebelumnya tiap frame x tiap wajah menggambar ulang
+        // puluhan path + gradient + shadowBlur + tekstur noise -> penyebab utama FPS drop saat aksesoris aktif / foto grup.
+        // Sekarang per frame cukup 1x drawImage. Style beranimasi (CYBER VISOR, ROYAL CROWN) tetap digambar live.
+        const SPRITE_SPEC = {
+            glasses: { unit: 240, x0: -1.3, x1: 1.3, y0: -0.5, y1: 0.55 },   // unit = jarak antar mata
+            hat: { unit: 420, x0: -1.15, x1: 1.15, y0: -1.2, y1: 0.55 }      // unit = lebar kepala
+        };
+        const spriteCache = new Map();
+        const styleList = kind => (kind === 'hat' ? HATS : GLASSES);
+
+        function accessorySprite(kind, idx) {
+            const key = `${kind}:${idx}`;
+            if (spriteCache.has(key)) return spriteCache.get(key);
+            const style = styleList(kind)[idx];
+            let sprite = null;
+            if (!style.animated) {
+                const sp = SPRITE_SPEC[kind];
+                const c = document.createElement('canvas');
+                c.width = Math.ceil((sp.x1 - sp.x0) * sp.unit);
+                c.height = Math.ceil((sp.y1 - sp.y0) * sp.unit);
+                const g = c.getContext('2d');
+                g.setTransform(sp.unit, 0, 0, sp.unit, -sp.x0 * sp.unit, -sp.y0 * sp.unit);
+                try { style.draw(g, 0); sprite = { canvas: c, ...sp }; } catch (e) { console.warn('Sprite gagal, pakai render live', e); }
+            }
+            spriteCache.set(key, sprite);
+            return sprite;
+        }
+
+        function drawAccessory(kind, idx, x, y, angle, size, offsetY, t) {
+            const sp = accessorySprite(kind, idx);
             ctx.save();
-            ctx.translate(fg.cx, fg.cy); ctx.rotate(fg.angle); ctx.scale(fg.eye, fg.eye);
-            GLASSES[styleIdx.glasses].draw(ctx, t);
+            ctx.translate(x, y); ctx.rotate(angle);
+            if (sp) {
+                const k = size / sp.unit;
+                ctx.scale(k, k);
+                ctx.drawImage(sp.canvas, sp.x0 * sp.unit, (sp.y0 + offsetY) * sp.unit);
+            } else {
+                ctx.scale(size, size); ctx.translate(0, offsetY);
+                styleList(kind)[idx].draw(ctx, t);
+            }
             ctx.restore();
         }
 
-        function drawHat(fg, t) {
-            ctx.save();
-            ctx.translate(fg.hatX, fg.hatY); ctx.rotate(fg.angle); ctx.scale(fg.head, fg.head);
-            ctx.translate(0, CFG.HAT_OFFSET);
-            HATS[styleIdx.hat].draw(ctx, t);
-            ctx.restore();
-        }
+        function drawGlasses(fg, t) { drawAccessory('glasses', styleIdx.glasses, fg.cx, fg.cy, fg.angle, fg.eye, 0, t); }
+        function drawHat(fg, t) { drawAccessory('hat', styleIdx.hat, fg.hatX, fg.hatY, fg.angle, fg.head, CFG.HAT_OFFSET, t); }
+
+        // Siapkan semua sprite di waktu idle, supaya toggle aksesoris pertama kali tidak tersendat
+        (function warmSprites() {
+            const jobs = [];
+            GLASSES.forEach((_, i) => jobs.push(['glasses', i]));
+            HATS.forEach((_, i) => jobs.push(['hat', i]));
+            const idle = window.requestIdleCallback ? fn => requestIdleCallback(fn, { timeout: 1500 }) : fn => setTimeout(fn, 60);
+            const next = () => { const j = jobs.shift(); if (!j) return; accessorySprite(j[0], j[1]); idle(next); };
+            idle(next);
+        })();
 
         function drawSkeletons() {
             ctx.save();
@@ -1472,224 +1589,313 @@
         function updateMode(g, faces) {
             if (++uiTick % 8) return;
             let s;
-            if (capState === 'countdown') s = 'REC: STAND BY...';
-            else if (capState === 'recording') s = 'REC: RECORDING';
-            else if (capState === 'modal') s = 'REC: UPLOADING / QR';
+            if (capState === 'countdown') s = 'FOTO: SIAP-SIAP...';
             else if (g && gest.hold === g.type) s = (g.type === 'next' || g.type === 'prev') ? `STYLE_${g.type.toUpperCase()}: LOCKING...` : `${LABEL[g.type]}: LOCKING...`;
             else if (hands.length) s = `TRACKING ${hands.length} HAND${hands.length > 1 ? 'S' : ''}`;
             else s = 'READY';
-            modeEl.textContent = `${s} | FACES: ${faces.length || 'SEARCHING'}${farCount ? ` (FAR ${farCount})` : ''} | ZOOM x${cropBudget} ${Math.round(visionMs)}ms`;
+            modeEl.textContent = `${s} | FACES: ${faces.length || 'SEARCHING'}${farCount ? ` (FAR ${farCount})` : ''} | ${Math.round(fps)} FPS | AI ${Math.round(visionMs)}ms`;
         }
 
-        // ================== VIDEO CAPTURE (3 detik) + UPLOAD + QR ==================
-        const APP = Object.assign({ SUPABASE_URL: '', SUPABASE_ANON_KEY: '', BUCKET: 'fog-glass', FOLDER: 'videos', VIEWER_URL: '' }, window.FILTER_SYNC_CONFIG || {});
-        const supa = (APP.SUPABASE_URL && APP.SUPABASE_ANON_KEY && window.supabase)
-            ? window.supabase.createClient(APP.SUPABASE_URL, APP.SUPABASE_ANON_KEY, { auth: { persistSession: false } })
-            : null;
-
+        // ================== FOTO: COUNTDOWN -> 1 FOTO -> NAMA LENGKAP + NO HP -> SIMPAN ==================
+        // Foto dirender ulang dari frame kamera RESOLUSI ASLI (bukan screenshot layar / frame inference),
+        // mirror sama seperti preview, tanpa skeleton / ring HUD. Disimpan sebagai foto-<nama-lengkap>-<nohp>.jpg.
         const countdownEl = document.getElementById('countdown');
-        const recIndicator = document.getElementById('rec_indicator');
-        const recText = document.getElementById('rec_text');
-        const recBar = document.getElementById('rec_bar');
-        const modalEl = document.getElementById('video_modal');
-        const previewEl = document.getElementById('video_preview');
-        const qrBox = document.getElementById('qr_box');
-        const uploadStatusEl = document.getElementById('upload_status');
-        const saveLocalEl = document.getElementById('save_local');
-        const modalTimerEl = document.getElementById('modal_timer');
-        const closeBtn = document.getElementById('close_modal');
+        const flashEl = document.getElementById('flash');
+        const modalEl = document.getElementById('photo_modal');
+        const formEl = document.getElementById('photo_form');
+        const previewEl = document.getElementById('photo_preview');
+        const nameEl = document.getElementById('in_name');
+        const phoneEl = document.getElementById('in_phone');
+        const formErrorEl = document.getElementById('form_error');
+        const fileHintEl = document.getElementById('file_hint');
+        const savePhotoBtn = document.getElementById('save_photo');
+        const cancelPhotoBtn = document.getElementById('cancel_photo');
+        const photoBtn = document.getElementById('photo_btn');
+        const folderBtn = document.getElementById('folder_btn');
 
-        // Canvas khusus rekaman: salinan layar TANPA skeleton / ring HUD, resolusi tetap
-        const recCanvas = document.createElement('canvas');
-        const recCtx = recCanvas.getContext('2d');
+        const photoCanvas = document.createElement('canvas');
+        const photoCtx = photoCanvas.getContext('2d', { alpha: false });
 
-        let capState = 'idle';          // idle | countdown | recording | modal
-        let recorder = null, recChunks = [], recStart = 0, recCaption = '';
-        let countdownTimer = null, modalTimer = null, videoUrl = null;
+        let capState = 'idle';          // idle | countdown | review | saving
+        let countdownTimer = null, photoBlob = null, photoUrl = null;
+        const touched = { name: false, phone: false };
 
-        function canCapture() { return capState === 'idle' && !!video.videoWidth && typeof MediaRecorder !== 'undefined'; }
-        const pad2 = n => String(n).padStart(2, '0');
+        function canCapture() { return capState === 'idle' && !!video.videoWidth; }
 
-        function randomId() {
-            if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
-            const b = crypto.getRandomValues(new Uint8Array(16));
-            return Array.from(b, x => x.toString(16).padStart(2, '0')).join('');
-        }
-
-        // MP4 diutamakan (bisa diputar di iPhone), fallback ke WebM
-        function pickMime() {
-            const list = ['video/mp4;codecs=avc1.42E01F', 'video/mp4;codecs=avc1', 'video/mp4',
-                          'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-            return list.find(t => MediaRecorder.isTypeSupported(t)) || '';
-        }
-
+        // Countdown pakai timer (non-blocking): kamera & tracking tetap jalan normal selama 3-2-1
         function startCountdown() {
             if (!canCapture()) return;
             capState = 'countdown';
+            photoBtn.disabled = true;
             let n = CFG.COUNTDOWN;
-            countdownEl.style.display = 'flex';
             countdownEl.textContent = n;
+            countdownEl.style.display = 'flex';
             countdownTimer = setInterval(() => {
                 n--;
                 if (n > 0) { countdownEl.textContent = n; return; }
-                clearInterval(countdownTimer);
-                countdownEl.style.display = 'none';
-                countdownEl.textContent = '';
-                startRecording();
+                stopCountdownUI();
+                takePhoto();
             }, 1000);
         }
 
-        function startRecording() {
-            // Ukuran genap (syarat encoder), aspek sama dengan layar
-            const s = CFG.REC_LONG_SIDE / Math.max(W, H);
-            recCanvas.width = Math.round(W * s / 2) * 2;
-            recCanvas.height = Math.round(H * s / 2) * 2;
-            const d = new Date();
-            recCaption = `FILTER_SYNC // ${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-            recordFrame();
-
-            const mimeType = pickMime();
-            let stream;
-            try {
-                stream = recCanvas.captureStream(CFG.REC_FPS);
-                recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: CFG.REC_BITRATE } : { videoBitsPerSecond: CFG.REC_BITRATE });
-            } catch (err) {
-                console.error(err);
-                toast('REC NOT SUPPORTED IN THIS BROWSER');
-                capState = 'idle';
-                return;
-            }
-            recChunks = [];
-            recorder.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
-            recorder.onstop = () => {
-                stream.getTracks().forEach(tr => tr.stop());
-                recIndicator.style.display = 'none';
-                const type = (recorder.mimeType || mimeType || 'video/webm').split(';')[0];
-                const blob = new Blob(recChunks, { type });
-                finishRecording(blob, type, d);
-            };
-            capState = 'recording';
-            recStart = performance.now();
-            recIndicator.style.display = 'block';
-            recorder.start(250);
-            setTimeout(() => { if (recorder && recorder.state === 'recording') recorder.stop(); }, CFG.REC_SECONDS * 1000);
+        function stopCountdownUI() {
+            clearInterval(countdownTimer);
+            countdownTimer = null;
+            countdownEl.style.display = 'none';
+            countdownEl.textContent = '';
         }
 
-        // Dipanggil dari frame() sebelum skeleton/HUD digambar
-        function recordFrame() {
-            const rw = recCanvas.width, rh = recCanvas.height;
-            recCtx.drawImage(canvas, 0, 0, rw, rh);
-            recCtx.save();
-            recCtx.font = `bold ${Math.round(rh * 0.026)}px "Courier New", monospace`;
-            recCtx.textAlign = 'right'; recCtx.textBaseline = 'bottom';
-            recCtx.shadowBlur = 8; recCtx.shadowColor = '#ff6ad5';
-            recCtx.fillStyle = 'rgba(255,230,250,0.92)';
-            recCtx.fillText(recCaption, rw - rh * 0.03, rh - rh * 0.03);
-            recCtx.restore();
-        }
-
-        function updateRecIndicator(now) {
-            if (capState !== 'recording') return;
-            const el = Math.min(CFG.REC_SECONDS, (now - recStart) / 1000);
-            recText.textContent = `REC ${(CFG.REC_SECONDS - el).toFixed(1)}s`;
-            recBar.style.width = `${(el / CFG.REC_SECONDS) * 100}%`;
-        }
-
-        function finishRecording(blob, type, d) {
-            const ext = type === 'video/mp4' ? 'mp4' : 'webm';
-            const fileName = `filter-sync-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}.${ext}`;
-            showModal(blob, fileName);
-            if (!blob.size) { qrBox.textContent = 'RECORD FAILED'; uploadStatusEl.textContent = ''; return; }
-            uploadVideo(blob, type, ext, d);
-        }
-
-        function showModal(blob, fileName) {
-            capState = 'modal';
-            if (videoUrl) URL.revokeObjectURL(videoUrl);
-            videoUrl = URL.createObjectURL(blob);
-            previewEl.src = videoUrl;
-            previewEl.play().catch(() => {});
-            saveLocalEl.href = videoUrl;
-            saveLocalEl.download = fileName;
-            qrBox.textContent = 'GENERATING...';
-            uploadStatusEl.textContent = 'UPLOADING...';
-            modalEl.classList.add('open');
-            closeBtn.focus();
-            let left = CFG.MODAL_TIMEOUT;
-            modalTimerEl.textContent = `AUTO-CLOSE IN ${left}s`;
-            clearInterval(modalTimer);
-            modalTimer = setInterval(() => {
-                left--;
-                modalTimerEl.textContent = `AUTO-CLOSE IN ${left}s`;
-                if (left <= 0) closeModal();
-            }, 1000);
-        }
-
-        function closeModal() {
-            clearInterval(modalTimer);
-            modalEl.classList.remove('open');
-            previewEl.pause();
+        function cancelCountdown() {
+            if (capState !== 'countdown') return;
+            stopCountdownUI();
             capState = 'idle';
+            photoBtn.disabled = false;
+            toast('FOTO DIBATALKAN');
         }
 
-        // VIEWER_URL dari config.js, atau video.html di folder yang sama dengan halaman ini
-        function viewerBase() { return APP.VIEWER_URL || new URL('video.html', location.href).href; }
-        function isLocalViewer(u) { return u.protocol === 'file:' || ['localhost', '127.0.0.1', '[::1]', '::1'].includes(u.hostname); }
+        // Hanya SATU foto per take
+        function takePhoto() {
+            const vw = video.videoWidth, vh = video.videoHeight;
+            if (!vw || !vh) { resetToCamera(); toast('KAMERA BELUM SIAP'); return; }
+            computeLayout();
+            // Koordinat layar -> piksel kamera (kebalikan object-fit: cover). Hasil = frame kamera penuh, aspect ratio asli.
+            const s = vw / layout.dw;
+            photoCanvas.width = vw; photoCanvas.height = vh;
+            renderScene(photoCtx, [s, 0, 0, s, -layout.ox * s, -layout.oy * s], performance.now(), 0, faceGeoms());
+            capState = 'review';            // preview & AI berhenti di frame ini sampai form selesai (hemat CPU/GPU)
+            flashEl.classList.add('on');
+            requestAnimationFrame(() => requestAnimationFrame(() => flashEl.classList.remove('on')));
+            photoCanvas.toBlob(blob => {
+                photoCanvas.width = photoCanvas.height = 1;      // lepas buffer besar, tidak menumpuk di memori
+                if (!blob) { resetToCamera(); toast('GAGAL MENGAMBIL FOTO, COBA LAGI'); return; }
+                photoBlob = blob;
+                photoUrl = URL.createObjectURL(blob);
+                openReview();
+            }, 'image/jpeg', CFG.PHOTO_QUALITY);
+        }
 
-        async function uploadVideo(blob, type, ext, d) {
-            if (!supa) {
-                qrBox.textContent = 'SUPABASE NOT CONFIGURED';
-                uploadStatusEl.textContent = 'Isi config.js untuk QR. Gunakan SAVE LOCAL.';
-                return;
-            }
-            const day = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-            const path = `${APP.FOLDER}/${day}/${randomId()}.${ext}`;
+        function openReview() {
+            previewEl.src = photoUrl;
+            nameEl.value = '';
+            phoneEl.value = '';
+            touched.name = touched.phone = false;
+            refreshForm();
+            modalEl.classList.add('open');
+            setTimeout(() => nameEl.focus(), 0);
+        }
+
+        // Kembali ke kamera: foto lama dilepas dari memori, tidak ada file sementara
+        function resetToCamera() {
+            modalEl.classList.remove('open');
+            previewEl.removeAttribute('src');
+            if (photoUrl) URL.revokeObjectURL(photoUrl);
+            photoUrl = null;
+            photoBlob = null;
+            if (document.activeElement && modalEl.contains(document.activeElement)) document.activeElement.blur();
+            capState = 'idle';
+            photoBtn.disabled = false;
+            cancelPhotoBtn.disabled = false;
+            lastFrame = performance.now();
+        }
+
+        function cancelPhoto() {
+            if (capState !== 'review') return;
+            resetToCamera();
+            toast('FOTO TIDAK DISIMPAN');
+        }
+
+        // ---- Validasi Nama Lengkap + No HP ----
+        // Nama file: huruf kecil, tanpa aksen; spasi, simbol & karakter ilegal Windows (\ / : * ? " < > |) -> "-"
+        function slugify(s) {
+            return s.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+                .replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 60).replace(/-+$/, '');
+        }
+
+        function validateStudent(rawName, rawPhone) {
+            const name = rawName.trim().replace(/\s+/g, ' ');
+            const phone = rawPhone.trim();
+            if (!name) return { ok: false, field: 'name', error: 'Nama lengkap wajib diisi.' };
+            if (!/\p{L}/u.test(name)) return { ok: false, field: 'name', error: 'Nama lengkap harus berisi huruf.' };
+            if (!phone) return { ok: false, field: 'phone', error: 'No HP wajib diisi.' };
+            if (!/^\d+$/.test(phone)) return { ok: false, field: 'phone', error: 'No HP hanya boleh berisi angka.' };
+            if (!/^(08|628)/.test(phone)) return { ok: false, field: 'phone', error: 'No HP harus diawali 08 atau 628.' };
+            const [min, max] = phone.startsWith('08') ? [9, 13] : [10, 14];
+            if (phone.length < min || phone.length > max) return { ok: false, field: 'phone', error: 'No HP tidak valid. Contoh: 081234567890' };
+            return { ok: true, name, phone, base: `foto-${slugify(name)}-${phone}` };
+        }
+
+        function refreshForm() {
+            const r = validateStudent(nameEl.value, phoneEl.value);
+            nameEl.setAttribute('aria-invalid', String(!r.ok && r.field === 'name' && touched.name));
+            phoneEl.setAttribute('aria-invalid', String(!r.ok && r.field === 'phone' && touched.phone));
+            formErrorEl.textContent = (!r.ok && touched[r.field]) ? r.error : '';
+            fileHintEl.textContent = r.ok ? `FILE: ${r.base}.jpg` : '';
+            savePhotoBtn.disabled = !r.ok || capState !== 'review';
+            return r;
+        }
+
+        nameEl.addEventListener('input', () => { touched.name = true; refreshForm(); });
+        nameEl.addEventListener('blur', () => { if (capState === 'review' && nameEl.value) { touched.name = true; refreshForm(); } });
+        phoneEl.addEventListener('input', () => {
+            const digits = phoneEl.value.replace(/\D/g, '');            // hanya angka
+            if (digits !== phoneEl.value) phoneEl.value = digits;
+            touched.phone = true;
+            refreshForm();
+        });
+
+        formEl.addEventListener('submit', async e => {
+            e.preventDefault();
+            if (capState !== 'review' || !photoBlob) return;
+            touched.name = touched.phone = true;
+            const r = refreshForm();
+            if (!r.ok) { (r.field === 'name' ? nameEl : phoneEl).focus(); return; }
+            capState = 'saving';
+            savePhotoBtn.disabled = true;
+            cancelPhotoBtn.disabled = true;
+            savePhotoBtn.textContent = 'MENYIMPAN...';
             try {
-                const { error } = await supa.storage.from(APP.BUCKET).upload(path, blob, {
-                    contentType: type, cacheControl: '3600', upsert: false
-                });
-                if (error) throw error;
-                if (capState !== 'modal') return;          // modal sudah ditutup
-                const viewer = new URL(viewerBase());
-                viewer.searchParams.set('v', path);
-                renderQR(viewer.href);
-                console.info('Viewer:', viewer.href);
-                uploadStatusEl.textContent = isLocalViewer(viewer)
-                    ? 'WARNING: video.html masih di localhost/file, HP tidak bisa membukanya. Isi VIEWER_URL di config.js.'
-                    : 'SCAN TO SAVE / SHARE';
+                const where = await storePhoto(photoBlob, r.base);
+                resetToCamera();
+                toast(`FOTO BERHASIL DISIMPAN // ${where}`);
             } catch (err) {
-                console.error('Upload failed:', err);
-                qrBox.textContent = 'UPLOAD FAILED';
-                const msg = err.message || String(err);
-                uploadStatusEl.textContent = /mime|size|policy|security/i.test(msg)
-                    ? `ERROR: ${msg}. Sudah jalankan supabase-video-setup.sql?`
-                    : `ERROR: ${msg}`;
+                console.error('Save failed:', err);
+                capState = 'review';
+                if (err && err.name === 'NotFoundError') { photoDir = null; dirForgotten = true; forgetDir(); updateFolderLabel(); }
+                formErrorEl.textContent = err && err.name === 'AbortError'
+                    ? 'Folder belum dipilih. Klik SIMPAN lagi lalu pilih folder penyimpanan.'
+                    : err && err.name === 'NotFoundError'
+                        ? 'Folder penyimpanan tidak ditemukan. Klik SIMPAN lagi untuk memilih folder baru.'
+                        : `Gagal menyimpan foto: ${(err && err.message) || err}`;
+            } finally {
+                savePhotoBtn.textContent = 'SIMPAN';
+                cancelPhotoBtn.disabled = false;
+                if (capState === 'review') savePhotoBtn.disabled = !validateStudent(nameEl.value, phoneEl.value).ok;
             }
+        });
+
+        // ---- Penyimpanan file ----
+        // Chrome/Edge: folder dipilih SEKALI (File System Access API) dan diingat. Nama bentrok -> -2, -3, ... (tidak menimpa).
+        // Browser tanpa API ini: fallback download biasa ke folder Downloads.
+        const canPickFolder = typeof window.showDirectoryPicker === 'function';
+        let photoDir = null;
+
+        function kv(mode, op) {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open('binus-photobooth', 1);
+                req.onupgradeneeded = () => req.result.createObjectStore('kv');
+                req.onerror = () => reject(req.error);
+                req.onsuccess = () => {
+                    const db = req.result;
+                    try {
+                        const tx = db.transaction('kv', mode);
+                        const r = op(tx.objectStore('kv'));
+                        tx.oncomplete = () => { db.close(); resolve(r ? r.result : undefined); };
+                        tx.onerror = tx.onabort = () => { db.close(); reject(tx.error); };
+                    } catch (e) { db.close(); reject(e); }
+                };
+            });
+        }
+        const loadSavedDir = () => kv('readonly', s => s.get('photoDir')).catch(() => null);
+        const rememberDir = h => kv('readwrite', s => s.put(h, 'photoDir')).catch(e => console.warn('Folder tidak bisa diingat', e));
+        const forgetDir = () => kv('readwrite', s => s.delete('photoDir')).catch(() => {});
+        let dirForgotten = false;
+
+        function updateFolderLabel() {
+            if (!canPickFolder) { folderBtn.textContent = 'SIMPAN KE: DOWNLOADS'; folderBtn.disabled = true; return; }
+            folderBtn.textContent = photoDir ? `FOLDER: ${photoDir.name}` : 'FOLDER: PILIH';
         }
 
-        function renderQR(url) {
-            const qr = qrcode(0, 'M');
-            qr.addData(url);
-            qr.make();
-            const img = new Image();
-            img.src = qr.createDataURL(8, 2);
-            img.alt = 'QR code to save or share the video';
-            qrBox.replaceChildren(img);
+        async function pickFolder() {
+            photoDir = await window.showDirectoryPicker({ id: 'binus-photobooth', mode: 'readwrite', startIn: 'pictures' });
+            dirForgotten = false;
+            await rememberDir(photoDir);
+            updateFolderLabel();
+            return photoDir;
         }
 
-        document.getElementById('rec_btn').addEventListener('click', e => { e.currentTarget.blur(); startCountdown(); });
-        closeBtn.addEventListener('click', closeModal);
+        async function getPhotoDir() {
+            if (!canPickFolder) return null;
+            if (!photoDir && !dirForgotten) photoDir = (await loadSavedDir()) || null;
+            if (photoDir) {
+                const opts = { mode: 'readwrite' };
+                let perm = await photoDir.queryPermission(opts);
+                if (perm === 'prompt') perm = await photoDir.requestPermission(opts);
+                if (perm === 'granted') return photoDir;
+            }
+            return pickFolder();
+        }
+
+        async function fileExists(dir, name) {
+            try { await dir.getFileHandle(name); return true; }
+            catch (e) { if (e.name === 'NotFoundError') return false; throw e; }
+        }
+
+        async function storePhoto(blob, base) {
+            const dir = await getPhotoDir();
+            if (!dir) {
+                downloadBlob(blob, `${base}.jpg`);
+                return `Downloads/${base}.jpg`;
+            }
+            let name = `${base}.jpg`;
+            for (let n = 2; await fileExists(dir, name); n++) name = `${base}-${n}.jpg`;   // foto lama tidak pernah ditimpa
+            const handle = await dir.getFileHandle(name, { create: true });
+            const w = await handle.createWritable();
+            try {
+                await w.write(blob);
+                await w.close();
+            } catch (e) {
+                try { await w.abort(); } catch (_) { /* sudah tertutup */ }
+                try { await dir.removeEntry(name); } catch (_) { /* tidak ada file setengah jadi */ }
+                throw e;
+            }
+            return `${dir.name}/${name}`;
+        }
+
+        function downloadBlob(blob, name) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = name; a.style.display = 'none';
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 10000);
+        }
+
+        photoBtn.addEventListener('click', e => { e.currentTarget.blur(); startCountdown(); });
+        cancelPhotoBtn.addEventListener('click', cancelPhoto);
+        folderBtn.addEventListener('click', async e => {
+            e.currentTarget.blur();
+            try { await pickFolder(); toast(`FOTO AKAN DISIMPAN KE: ${photoDir.name}`); }
+            catch (err) { if (err.name !== 'AbortError') { console.error(err); toast('GAGAL MEMILIH FOLDER'); } }
+        });
+        if (canPickFolder) loadSavedDir().then(h => { if (h && !photoDir) photoDir = h; updateFolderLabel(); });
+        else updateFolderLabel();
 
         // ================== CAMERA + MEDIAPIPE TASKS ==================
         let handLandmarker = null, farHandLandmarker = null, faceLandmarker = null, farLandmarker = null, farCount = 0;
-        let lastVideoTime = -1, lastVisionTs = 0, visionTick = 0, lastVisionRun = 0;
+        let lastVisionTs = 0, visionTick = 0, lastVisionRun = 0;
 
         async function startCamera() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw new Error('Browser tidak mendukung kamera');
             const stream = await navigator.mediaDevices.getUserMedia({
-                video: { width: { ideal: CFG.CAMERA_W }, height: { ideal: CFG.CAMERA_H }, facingMode: 'user' }, audio: false
+                video: {
+                    width: { ideal: CFG.CAMERA_W }, height: { ideal: CFG.CAMERA_H },
+                    frameRate: { ideal: CFG.CAMERA_FPS }, facingMode: 'user'
+                },
+                audio: false
             });
             video.srcObject = stream;
+            stream.getVideoTracks().forEach(tr => tr.addEventListener('ended', () => {
+                modeEl.textContent = 'CAMERA_ERROR: KAMERA TERPUTUS - REFRESH HALAMAN';
+            }));
             await video.play();
+            computeLayout();
+        }
+
+        function cameraErrorText(err) {
+            const n = err && err.name;
+            if (n === 'NotAllowedError') return 'IZIN KAMERA DITOLAK - izinkan kamera di browser lalu refresh';
+            if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'KAMERA TIDAK DITEMUKAN';
+            if (n === 'NotReadableError') return 'KAMERA SEDANG DIPAKAI APLIKASI LAIN';
+            return (err && err.message) || String(err);
         }
 
         async function initVision() {
@@ -1704,12 +1910,17 @@
                     return await Task.createFromOptions(fileset, { baseOptions: { modelAssetPath, delegate: 'CPU' }, runningMode: 'VIDEO', ...options });
                 }
             };
-            handLandmarker = await create(HandLandmarker, HAND_MODEL, {
-                numHands: CFG.MAX_HANDS,
-                minHandDetectionConfidence: CFG.HAND_DET_CONF,
-                minHandPresenceConfidence: CFG.HAND_PRES_CONF,
-                minTrackingConfidence: CFG.HAND_TRACK_CONF
-            });
+            // Tiap model dimuat terpisah: kalau satu gagal, yang lain tetap jalan
+            try {
+                handLandmarker = await create(HandLandmarker, HAND_MODEL, {
+                    numHands: CFG.MAX_HANDS,
+                    minHandDetectionConfidence: CFG.HAND_DET_CONF,
+                    minHandPresenceConfidence: CFG.HAND_PRES_CONF,
+                    minTrackingConfidence: CFG.HAND_TRACK_CONF
+                });
+            } catch (e) {
+                console.error('Hand landmarker failed, gestures disabled', e);
+            }
             if (CFG.FAR_HAND_DETECTION) {
                 try {
                     farHandLandmarker = await create(HandLandmarker, HAND_MODEL, {
@@ -1722,9 +1933,13 @@
                 }
             }
             // Confidence lebih rendah supaya wajah yang agak jauh / kecil tetap terdeteksi
-            faceLandmarker = await create(FaceLandmarker, FACE_MODEL, {
-                numFaces: CFG.MAX_FACES, minFaceDetectionConfidence: 0.35, minFacePresenceConfidence: 0.35, minTrackingConfidence: 0.35
-            });
+            try {
+                faceLandmarker = await create(FaceLandmarker, FACE_MODEL, {
+                    numFaces: CFG.MAX_FACES, minFaceDetectionConfidence: 0.35, minFacePresenceConfidence: 0.35, minTrackingConfidence: 0.35
+                });
+            } catch (e) {
+                console.error('Face landmarker failed, accessories disabled', e);
+            }
             // Landmarker kedua (mode IMAGE) khusus untuk potongan video yang di-zoom (wajah jauh)
             if (CFG.FAR_DETECTION) {
                 try {
@@ -1735,43 +1950,77 @@
                     console.error('Far-face landmarker failed, only near faces will be detected', e);
                 }
             }
+            if (!handLandmarker && !faceLandmarker) throw new Error('Model AI gagal dimuat (cek koneksi internet)');
         }
 
-        // AI inference dipisahkan dari render. Canvas tetap render tiap refresh layar,
-        // sementara MediaPipe dibatasi ~25fps supaya rekaman 30fps tidak tersendat.
+        // ================== AI SCHEDULER ==================
+        // Penyebab patah-patah sebelumnya: dalam SATU frame bisa jalan sampai ~6 inference (tangan + wajah + 3 crop
+        // zoom + crop tangan) di thread yang sama dengan render, jadi sesekali frame tertahan 60-150 ms.
+        // Sekarang: maksimal SATU inference per giliran, dijalankan SETELAH frame tampil (MessageChannel),
+        // dan jeda antar inference melebar otomatis kalau model lambat -> render selalu kebagian waktu.
+        // Rasio: tangan 1/2 (gesture responsif), wajah 1/4, crop wajah jauh 1/8, crop tangan jauh 1/8.
+        const VISION_PLAN = ['hand', 'face', 'hand', 'crop', 'hand', 'face', 'hand', 'farHand'];
+        const lastVideoTimeFor = { hand: -1, face: -1 };
+        let planIdx = 0, visionPending = false, visionMs = 0, cropTick = 0;
+        const visionChannel = new MessageChannel();
+        visionChannel.port1.onmessage = () => { visionPending = false; runVision(performance.now()); };
+
+        function scheduleVision() {
+            if (visionPending) return;
+            visionPending = true;
+            visionChannel.port2.postMessage(0);
+        }
+
+        function nextVisionTs() {
+            lastVisionTs = Math.max(performance.now(), lastVisionTs + 1);   // detectForVideo wajib timestamp naik
+            return lastVisionTs;
+        }
+
         function runVision(now) {
-            if (!handLandmarker || video.readyState < 2 || video.currentTime === lastVideoTime) return;
-            if (now - lastVisionRun < CFG.VISION_INTERVAL_MS) return;
-            lastVisionRun = now;
-            lastVideoTime = video.currentTime;
-            const started = performance.now();
-            const ts = Math.max(now, lastVisionTs + 1);
-            lastVisionTs = ts;
-            visionTick++;
-
-            updateHands(handLandmarker.detectForVideo(video, ts));
-
-            // Full-face cukup tiap dua tick; track + smoothing menjaga aksesori tetap stabil.
-            if (faceLandmarker && visionTick % 2 === 0) {
-                const r = faceLandmarker.detectForVideo(video, ts);
-                updateFaces((r && r.faceLandmarks) || [], 'full');
+            if (capState === 'review' || capState === 'saving' || video.readyState < 2 || !video.videoWidth) return;
+            const gap = Math.max(CFG.VISION_INTERVAL_MS, visionMs * CFG.VISION_HEADROOM);
+            if (now - lastVisionRun < gap) return;
+            for (let tries = 0; tries < VISION_PLAN.length; tries++) {
+                const task = VISION_PLAN[planIdx++ % VISION_PLAN.length];
+                const started = performance.now();
+                if (!runVisionTask(task)) continue;      // task tidak tersedia / frame belum baru -> coba task berikutnya
+                const ms = performance.now() - started;
+                visionMs = visionMs ? visionMs * 0.85 + ms * 0.15 : ms;
+                lastVisionRun = now;
+                visionTick++;
+                return;
             }
-
-            // Saat merekam, inference crop mahal dibuat lebih jarang supaya encoder punya headroom.
-            const cropStride = capState === 'recording' ? 3 : 2;
-            if (farLandmarker && visionTick % cropStride === 0) runFarCrops();
-            if (farHandLandmarker && visionTick % CFG.FAR_HAND_EVERY === 0) runFarHandCrop();
-
-            adaptBudget(performance.now() - started);
         }
 
-        // Jumlah crop per frame menyesuaikan beban: kalau deteksi > budget, kurangi; kalau ringan, tambah lagi
-        let cropBudget = CFG.CROPS_PER_FRAME, visionMs = 0, budgetCooldown = 0;
-        function adaptBudget(ms) {
-            visionMs = visionMs ? visionMs * 0.9 + ms * 0.1 : ms;
-            if (--budgetCooldown > 0) return;
-            if (visionMs > CFG.VISION_BUDGET_MS && cropBudget > 1) { cropBudget--; budgetCooldown = 30; }
-            else if (visionMs < CFG.VISION_BUDGET_MS * 0.6 && cropBudget < CFG.CROPS_PER_FRAME) { cropBudget++; budgetCooldown = 30; }
+        function runVisionTask(task) {
+            try {
+                if (task === 'hand') {
+                    if (!handLandmarker || video.currentTime === lastVideoTimeFor.hand) return false;
+                    lastVideoTimeFor.hand = video.currentTime;
+                    updateHands(handLandmarker.detectForVideo(video, nextVisionTs()));
+                    return true;
+                }
+                if (task === 'face') {
+                    if (!faceLandmarker || video.currentTime === lastVideoTimeFor.face) return false;
+                    lastVideoTimeFor.face = video.currentTime;
+                    const r = faceLandmarker.detectForVideo(video, nextVisionTs());
+                    updateFaces((r && r.faceLandmarks) || [], 'full');
+                    return true;
+                }
+                if (task === 'crop') {
+                    if (!farLandmarker) return false;
+                    runFarCrop();
+                    return true;
+                }
+                if (task === 'farHand') {
+                    if (!farHandLandmarker) return false;
+                    runFarHandCrop();
+                    return true;
+                }
+            } catch (e) {
+                console.warn(`Vision task "${task}" failed`, e);
+            }
+            return false;
         }
 
         // ================== FAR FACE DETECTION (zoom crop) ==================
@@ -1816,7 +2065,7 @@
             if (!tiles.length) return;
             const crop = tiles[handScanIdx++ % tiles.length];
             const C = CFG.HAND_CROP_SIZE;
-            handCropCanvas.width = C; handCropCanvas.height = C;
+            if (handCropCanvas.width !== C) { handCropCanvas.width = C; handCropCanvas.height = C; }   // jangan alokasi ulang tiap panggilan
             handCropCtx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, C, C);
             let res;
             try { res = farHandLandmarker.detect(handCropCanvas); } catch { return; }
@@ -1839,8 +2088,8 @@
 
         function trackCrop(t) {
             const vw = video.videoWidth, vh = video.videoHeight;
-            const c = screenToVideo(mid(t.pts.eL, t.pts.eR));
-            const fw = D(t.pts.sL, t.pts.sR) / layout.dw * vw;          // lebar wajah dalam piksel video
+            const c = screenToVideo(mid(t.tgt.eL, t.tgt.eR));
+            const fw = D(t.tgt.sL, t.tgt.sR) / layout.dw * vw;          // lebar wajah dalam piksel video
             const s = Math.round(Math.min(Math.min(vw, vh), Math.max(160, fw * CFG.FAR_TRACK_ZOOM)));
             const sx = Math.min(vw - s, Math.max(0, Math.round(c.x - s / 2)));
             const sy = Math.min(vh - s, Math.max(0, Math.round(c.y - s * 0.42)));   // sedikit ke atas: sisakan ruang dahi/rambut
@@ -1849,7 +2098,7 @@
 
         function detectCrop(crop) {
             const vw = video.videoWidth, vh = video.videoHeight, C = CFG.CROP_SIZE;
-            cropCanvas.width = C; cropCanvas.height = C;
+            if (cropCanvas.width !== C) { cropCanvas.width = C; cropCanvas.height = C; }
             cropCtx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, C, C);
             let res;
             try { res = farLandmarker.detect(cropCanvas); } catch (e) { console.warn(e); return; }
@@ -1867,70 +2116,89 @@
             updateFaces(list, 'crop');
         }
 
-        function runFarCrops() {
+        // Satu crop per giliran. Kalau ada wajah jauh: 2 dari 3 giliran untuk melacaknya, 1 untuk scan wajah baru.
+        function runFarCrop() {
             const now = performance.now();
             // Wajah yang tidak terlihat oleh deteksi full frame selama > 300 ms = wajah jauh
             const far = faceTracks.filter(t => now - t.time <= CFG.FACE_TIMEOUT && now - (t.fullTime || 0) > 300);
             farCount = far.length;
-            const n = capState === 'recording' ? 1 : cropBudget;
             const tiles = scanTiles();
-            for (let i = 0; i < n; i++) {
-                // Selalu sisakan slot scan supaya wajah jauh yang baru tetap ditemukan
-                const scanSlot = !far.length || (n === 1 ? visionTick % 2 === 1 : i === n - 1);
-                detectCrop(scanSlot ? tiles[scanIdx++ % tiles.length] : trackCrop(far[trackIdx++ % far.length]));
-            }
+            const scanSlot = !far.length || cropTick++ % 3 === 2;
+            detectCrop(scanSlot ? tiles[scanIdx++ % tiles.length] : trackCrop(far[trackIdx++ % far.length]));
         }
 
         // ================== MAIN LOOP ==================
-        let lastFrame = performance.now();
+        let lastFrame = performance.now(), fps = 0;
         function frame(now) {
             requestAnimationFrame(frame);
-            const dtMs = Math.min(50, now - lastFrame);
+            const dtMs = Math.min(50, Math.max(0, now - lastFrame));
             lastFrame = now;
-            const dt = dtMs / 1000, t = now / 1000;
+            if (dtMs > 0) fps = fps ? fps * 0.95 + (1000 / dtMs) * 0.05 : 1000 / dtMs;
             if (!video.videoWidth) return;
+            // Saat isi form: foto sudah dibekukan, preview & AI berhenti -> form tetap responsif
+            if (capState === 'review' || capState === 'saving') return;
 
             computeLayout();
-            runVision(now);
+            smoothFaces(dtMs);
             const faces = faceGeoms();
             const g = detectGesture(faces);
             processGesture(g, dtMs);
             updatePartyAnchor(faces);
             // Selama sign F masih ditahan, tulisan tetap tampil
             if (g && g.type === 'binus' && gest.latched === 'binus') party.until = Math.max(party.until, now + 1500);
-            const partyOn = now < party.until + CFG.PARTY_FADE;
 
-            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            ctx.save();
-            ctx.translate(W, 0); ctx.scale(-1, 1);
-            ctx.drawImage(video, layout.ox, layout.oy, layout.dw, layout.dh);
-            ctx.restore();
+            renderScene(mainCtx, [dpr, 0, 0, dpr, 0, 0], now, dtMs / 1000, faces);
 
-            // Aksesoris dipasang ke SEMUA wajah yang terdeteksi
-            faces.forEach(fg => {
-                if (active.hat) drawHat(fg, t);
-                if (active.hearts) { spawnHearts(fg, dt); drawEyeHearts(fg, t); }
-                if (active.glasses) drawGlasses(fg, t);
-            });
-            updateDrawHearts(dt);
-            if (partyOn) drawPartyText(now);
-            updateDrawConfetti(dt, now < party.until);
-
-            // Rekaman diambil SEBELUM skeleton / ring HUD, jadi videonya bersih
-            if (capState === 'recording') { recordFrame(); updateRecIndicator(now); }
-
-            if (capState !== 'recording' && showSkeleton) drawSkeletons();
-            if (capState !== 'recording' && g && gest.hold === g.type) drawHUDCircle(g.x, g.y, Math.min(1, gest.time / holdNeeded(g.type)), GESTURE_COLOR[g.type]);
+            // HUD hanya di layar, tidak pernah ikut di foto
+            if (showSkeleton) drawSkeletons();
+            if (g && gest.hold === g.type) drawHUDCircle(g.x, g.y, Math.min(1, gest.time / holdNeeded(g.type)), GESTURE_COLOR[g.type]);
             updateMode(g, faces);
+
+            // Inference berikutnya dijalankan setelah frame ini dipresentasikan, bukan di dalam frame
+            scheduleVision();
+        }
+
+        // Satu fungsi gambar untuk preview DAN foto, jadi hasil foto = persis yang terlihat (mirror + aksesoris).
+        // dt = 0 -> partikel tidak bergerak / tidak bertambah (dipakai saat merender foto).
+        function renderScene(target, m, now, dt, faces) {
+            const prev = ctx;
+            ctx = target;
+            try {
+                const t = now / 1000;
+                ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
+                ctx.save();
+                ctx.translate(W, 0); ctx.scale(-1, 1);
+                ctx.drawImage(video, layout.ox, layout.oy, layout.dw, layout.dh);
+                ctx.restore();
+
+                // Aksesoris dipasang ke SEMUA wajah yang terdeteksi
+                faces.forEach(fg => {
+                    if (active.hat) drawHat(fg, t);
+                    if (active.hearts) { if (dt > 0) spawnHearts(fg, dt); drawEyeHearts(fg, t); }
+                    if (active.glasses) drawGlasses(fg, t);
+                });
+                updateDrawHearts(dt);
+                if (now < party.until + CFG.PARTY_FADE) drawPartyText(now);
+                updateDrawConfetti(dt, dt > 0 && now < party.until);
+            } finally {
+                ctx = prev;
+            }
         }
 
         // ================== EVENTS / BOOT ==================
         let resizeTimer = null;
         window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(resize, 150); });
         window.addEventListener('keydown', e => {
-            const k = e.key.toLowerCase();
-            if (k === 'escape') { if (capState === 'modal') closeModal(); return; }
-            if (capState === 'modal') return;
+            const k = (e.key || '').toLowerCase();
+            // Form foto terbuka: semua shortcut mati (mengetik nama/no HP tidak boleh memicu filter). ESC = batal.
+            if (capState === 'review' || capState === 'saving') {
+                if (k === 'escape') { e.preventDefault(); cancelPhoto(); }
+                return;
+            }
+            if (k === 'escape') { cancelCountdown(); return; }
+            const tag = e.target && e.target.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
+            if (e.repeat) return;           // tahan tombol tidak boleh toggle berkali-kali
             if (k === 'v') startCountdown();
             else if (k === '1') fire('glasses');
             else if (k === '2') fire('hearts');
@@ -1947,11 +2215,19 @@
             }
         });
 
+        // Lepas kamera & model saat halaman ditutup / di-refresh
+        window.addEventListener('pagehide', () => {
+            const s = video.srcObject;
+            if (s) s.getTracks().forEach(tr => tr.stop());
+            [handLandmarker, farHandLandmarker, faceLandmarker, farLandmarker].forEach(l => { try { if (l) l.close(); } catch (_) { /* ignore */ } });
+            if (photoUrl) URL.revokeObjectURL(photoUrl);
+        });
+
         resize();
         updateStats();
         requestAnimationFrame(frame);
-        startCamera().catch(err => { modeEl.textContent = 'CAMERA_ERROR: ' + err.message; });
-        initVision().catch(err => { console.error(err); modeEl.textContent = 'VISION_ERROR: ' + err.message; });
+        startCamera().catch(err => { console.error(err); modeEl.textContent = 'CAMERA_ERROR: ' + cameraErrorText(err); });
+        initVision().catch(err => { console.error(err); modeEl.textContent = 'VISION_ERROR: ' + ((err && err.message) || err); });
     </script>
 </body>
 </html>
