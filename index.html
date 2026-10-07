@@ -146,7 +146,12 @@
             FACE_LERP: 0.7,         // filter noise per hasil deteksi wajah
             FACE_SMOOTH_MS: 45,     // interpolasi per frame render -> aksesoris bergerak halus 60fps, bukan loncat per deteksi
             HAND_LERP: 0.55,
-            FACE_TIMEOUT: 700,      // ms aksesoris tetap tampil saat wajah hilang sebentar
+            FACE_TIMEOUT: 700,      // ms MINIMUM aksesoris tetap tampil saat wajah hilang sebentar
+            FACE_TIMEOUT_GAPS: 3,   // ...atau 3x jeda rata-rata antar update wajah itu (wajah jauh dicek lebih jarang), mana yang lebih lama
+            FACE_TIMEOUT_MAX: 2000, // tapi tidak pernah lebih dari ini (orang yang pergi tidak meninggalkan topi "hantu")
+            FACE_FADE_IN_MS: 150,   // filter muncul halus
+            FACE_FADE_OUT_MS: 300,  // filter hilang halus (bukan langsung lenyap)
+            SRC_LERP: { full: 0.7, crop: 0.7, pose: 0.5, box: 0.35 },   // seberapa cepat posisi mengikuti tiap sumber
             HAND_TIMEOUT: 500,      // tangan bertahan saat model miss beberapa frame
             MAX_FACES: 12,          // lebih cocok untuk foto/video grup
             MAX_TRACKS: 18,
@@ -173,12 +178,12 @@
             OBJECT_SCORE: 0.35,     // skor minimum objek yang ditampilkan
             OBJECT_MAX: 25,         // maks objek per frame
             PERSON_SCORE: 0.3,      // orang dengan skor ini dipakai untuk zoom wajah & tangan jauh
-            OBJECT_TIMEOUT: 700,    // ms kotak objek bertahan saat detektor miss (anti kedip)
+            OBJECT_TIMEOUT: 1000,   // ms MINIMUM kotak objek bertahan saat detektor miss (anti kedip)...
+            OBJECT_TIMEOUT_RUNS: 4, // ...atau selama 4x jeda antar deteksi objek (detektor bisa melewatkan 2-3 deteksi berturut-turut)
             OBJECT_LERP: 0.5,       // smoothing kotak objek
             SHOW_OBJECTS: true,     // tampilkan kotak + label objek di layar (tidak ikut ke foto). Toggle: tombol [O]
             FACE_CONFIRM_HITS: 2,   // wajah baru tampil setelah terdeteksi 2x (buang false positive)
             FACE_NMS: 0.5,          // dua track lebih dekat dari ini (x lebar wajah) = wajah yang sama, digabung
-            FACE_NMS_MIXED: 0.9,    // radius gabung kalau satu track hasil estimasi (pose/kotak) dan satunya face mesh
             SRC_HOLD_MS: 1500,      // selama ini sejak terakhir dilihat sumber akurat (face mesh), estimasi tidak boleh menggeser posisinya
                                     // (lebih lama dari jeda kunjungan zoom ke wajah jauh, supaya tidak goyang antara 2 posisi)
             // ---- Semua orang kena filter ----
@@ -960,45 +965,116 @@
             return p;
         }
 
+        // ---- Umur track (anti hilang-hilangan) ----
+        // Batas waktu "wajah hilang" tidak lagi tetap 700 ms: tiap track mengukur jeda rata-rata antar update-nya sendiri.
+        // Wajah jauh yang hanya dicek bergiliran (jeda bisa 600-900 ms saat AI sibuk) otomatis diberi waktu lebih panjang,
+        // wajah dekat yang dicek tiap ~100 ms tetap cepat hilang kalau orangnya pergi.
+        function trackTimeout(t) {
+            return Math.min(CFG.FACE_TIMEOUT_MAX, Math.max(CFG.FACE_TIMEOUT, (t.gapAvg || 0) * CFG.FACE_TIMEOUT_GAPS));
+        }
+        // Masih boleh dicocokkan / dihidupkan lagi (termasuk saat sedang fade-out)
+        function trackAlive(t, now = performance.now()) {
+            return now - t.time <= trackTimeout(t) + CFG.FACE_FADE_OUT_MS;
+        }
+        function touchTrack(t, src, now) {
+            const gap = now - t.time;
+            if (gap > 0) t.gapAvg = t.gapAvg ? t.gapAvg * 0.7 + gap * 0.3 : gap;
+            t.time = now;
+            t.hits++;
+            t.srcTime[src] = now;
+            if (src === 'full') t.fullTime = now;
+        }
+        function newTrack(raw, src, now) {
+            const t = { id: nextFaceId++, tgt: raw, pts: clonePts(raw), time: now, hits: 1, srcTime: { [src]: now }, gapAvg: 0,
+                        fullTime: src === 'full' ? now : 0, heartAcc: 0, calib: {}, shownAt: 0 };
+            faceTracks.push(t);
+            return t;
+        }
+
+        // Geser target ke deteksi baru. Kecepatan ikut akurasi sumber: estimasi kasar (kotak) bergerak lebih pelan -> tidak goyang.
+        function pullTarget(t, raw, src) {
+            const a = CFG.SRC_LERP[src];
+            Object.keys(raw).forEach(k => {
+                t.tgt[k].x += (raw[k].x - t.tgt[k].x) * a;
+                t.tgt[k].y += (raw[k].y - t.tgt[k].y) * a;
+            });
+        }
+
+        // Kalibrasi estimasi (pose/kotak) terhadap face mesh selama keduanya ada: simpan selisih posisi & skala.
+        // Saat face mesh hilang (orang menoleh), estimasi yang mengambil alih sudah dikoreksi -> filter TIDAK loncat.
+        function learnCalib(t, raw, src) {
+            const c = mid(raw.eL, raw.eR), e = D(raw.eL, raw.eR) || 1;
+            const ct = mid(t.tgt.eL, t.tgt.eR), et = D(t.tgt.eL, t.tgt.eR) || e;
+            const m = { dx: (ct.x - c.x) / e, dy: (ct.y - c.y) / e, s: et / e };
+            const o = t.calib[src];
+            t.calib[src] = o ? { dx: o.dx * 0.7 + m.dx * 0.3, dy: o.dy * 0.7 + m.dy * 0.3, s: o.s * 0.7 + m.s * 0.3 } : m;
+        }
+        function applyCalib(t, raw, src) {
+            const k = t.calib[src];
+            if (!k) return raw;
+            const c = mid(raw.eL, raw.eR), e = D(raw.eL, raw.eR) || 1;
+            const s = Math.min(2.5, Math.max(0.4, k.s)), out = {};
+            Object.keys(raw).forEach(n => {
+                out[n] = { x: c.x + (raw[n].x - c.x) * s + k.dx * e, y: c.y + (raw[n].y - c.y) * s + k.dy * e };
+            });
+            return out;
+        }
+
+        // Update satu track dari estimasi (pose/kotak): kalau sumber lebih akurat baru saja melihatnya -> hanya kalibrasi +
+        // jaga tetap hidup; kalau tidak -> estimasi (yang sudah dikoreksi) yang menggerakkan filter.
+        function updateFromEstimate(t, raw, src, now) {
+            if (SRC_PRIORITY[src] < trackPriority(t, now)) learnCalib(t, raw, src);
+            else pullTarget(t, applyCalib(t, raw, src), src);
+            touchTrack(t, src, now);
+        }
+
         // lmsList = daftar landmark face mesh (ternormalisasi ke full video), src = 'full' | 'crop'
         function updateFaces(lmsList, src) {
             updateFaceRaws(lmsList.map(rawFace), src);
         }
 
-        // raws = titik wajah dalam koordinat layar, src = 'full' | 'crop' | 'pose' | 'box'
+        // raws = titik wajah face mesh dalam koordinat layar, src = 'full' | 'crop'
         function updateFaceRaws(raws, src) {
-            const now = performance.now(), pr = SRC_PRIORITY[src];
+            const now = performance.now();
             const used = new Set();
             raws.forEach(raw => {
                 const c = mid(raw.eL, raw.eR), size = D(raw.sL, raw.sR) || 1;
                 let best = null, bd = Infinity;
                 faceTracks.forEach(t => {
-                    if (used.has(t) || now - t.time > CFG.FACE_TIMEOUT) return;
+                    if (used.has(t) || !trackAlive(t, now)) return;
                     const d = D(mid(t.tgt.eL, t.tgt.eR), c);    // cocokkan ke posisi deteksi terakhir, bukan posisi tampilan yang tertinggal
                     if (d < bd) { bd = d; best = t; }
                 });
-                if (best && bd < size * (pr < 3 ? 0.9 : 0.7)) {
+                if (!(best && bd < size * 0.7)) {
+                    // Wajah asli ditemukan untuk orang yang selama ini memakai estimasi: AMBIL ALIH track estimasinya
+                    // (bukan membuat track baru) -> tidak ada topi dobel, tidak ada kedip saat pergantian.
+                    best = adoptEstimateTrack(raw, used, now);
+                }
+                if (best) {
                     // Deteksi hanya memperbarui TARGET; posisi tampilan (pts) mengejar target tiap frame di smoothFaces()
-                    if (pr >= trackPriority(best, now)) {
-                        Object.keys(raw).forEach(k => {
-                            best.tgt[k].x += (raw[k].x - best.tgt[k].x) * CFG.FACE_LERP;
-                            best.tgt[k].y += (raw[k].y - best.tgt[k].y) * CFG.FACE_LERP;
-                        });
-                    }
-                    best.time = now;
-                    best.hits++;
-                    best.srcTime[src] = now;
-                    if (src === 'full') best.fullTime = now;
+                    pullTarget(best, raw, src);
+                    touchTrack(best, src, now);
                     used.add(best);
                 } else if (faceTracks.length < CFG.MAX_TRACKS) {
-                    const t = { id: nextFaceId++, tgt: raw, pts: clonePts(raw), time: now, hits: 1, srcTime: { [src]: now },
-                                fullTime: src === 'full' ? now : 0, heartAcc: 0 };
-                    faceTracks.push(t);
-                    used.add(t);
+                    used.add(newTrack(raw, src, now));
                 }
             });
-            faceTracks = faceTracks.filter(t => now - t.time <= CFG.FACE_TIMEOUT);
+            pruneTracks(now);
             mergeDuplicateTracks();
+        }
+
+        // Track estimasi (pose/kotak) di kepala orang yang sama dengan wajah face mesh ini
+        function adoptEstimateTrack(raw, used, now) {
+            if (typeof persons === 'undefined' || !persons.length) return null;
+            const v = screenToVideo(mid(raw.eL, raw.eR));
+            const p = persons.find(q => v.x >= q.x - q.w * 0.1 && v.x <= q.x + q.w * 1.1 && v.y >= q.y - q.w * 0.3 && v.y <= q.y + Math.max(q.h * 0.4, q.w));
+            if (!p) return null;
+            const t = trackInPerson(p, raw);
+            return t && !used.has(t) && trackPriority(t, now) < 3 ? t : null;
+        }
+
+        function pruneTracks(now) {
+            faceTracks = faceTracks.filter(t => trackAlive(t, now));
         }
 
         function clonePts(p) {
@@ -1027,13 +1103,15 @@
                 for (let j = faceTracks.length - 1; j > i; j--) {
                     const a = faceTracks[i], b = faceTracks[j];
                     const pa = trackPriority(a, now), pb = trackPriority(b, now);
-                    // Estimasi (pose/kotak) vs face mesh boleh meleset lebih jauh -> radius gabung lebih besar, supaya tidak ada topi dobel
-                    const k = pa !== pb ? CFG.FACE_NMS_MIXED : CFG.FACE_NMS;
-                    if (D(center(a), center(b)) > Math.max(width(a), width(b)) * k) continue;
+                    // Radius normal untuk semua sumber. (Radius besar untuk estimasi dulu bisa menggabungkan 2 orang yang
+                    // berdempetan -> salah satunya hilang lalu muncul lagi = kedip. Duplikat estimasi sekarang dicegah saat update.)
+                    if (D(center(a), center(b)) > Math.min(width(a), width(b)) * CFG.FACE_NMS) continue;
                     // Pertahankan sumber paling akurat, lalu track yang lebih "mapan" (lebih banyak hit)
                     const [keep, drop] = (pa !== pb ? pa > pb : a.hits >= b.hits) ? [a, b] : [b, a];
                     keep.hits += drop.hits;
                     keep.time = Math.max(keep.time, drop.time);
+                    keep.shownAt = keep.shownAt || drop.shownAt;           // sudah tampil -> jangan fade-in ulang
+                    keep.gapAvg = Math.min(keep.gapAvg || drop.gapAvg, drop.gapAvg || keep.gapAvg);
                     keep.fullTime = Math.max(keep.fullTime, drop.fullTime);
                     Object.entries(drop.srcTime).forEach(([s, tm]) => { keep.srcTime[s] = Math.max(keep.srcTime[s] || 0, tm); });
                     if (party.faceId === drop.id) party.faceId = keep.id;
@@ -1043,12 +1121,22 @@
             }
         }
 
-        // Geometri semua wajah yang aktif DAN sudah terkonfirmasi (bukan false positive sesaat)
+        // Geometri semua wajah yang aktif DAN sudah terkonfirmasi (bukan false positive sesaat).
+        // alpha: muncul dengan fade-in singkat dan hilang dengan fade-out, bukan pop/kedip.
         function faceGeoms() {
             const now = performance.now();
-            return faceTracks
-                .filter(t => now - t.time <= CFG.FACE_TIMEOUT && (t.hits >= CFG.FACE_CONFIRM_HITS || t.fullTime))
-                .map(t => ({ ...faceGeom(t.pts), id: t.id, track: t }));
+            const out = [];
+            faceTracks.forEach(t => {
+                if (!trackAlive(t, now) || !(t.hits >= CFG.FACE_CONFIRM_HITS || t.fullTime)) return;
+                if (!t.shownAt) t.shownAt = now;
+                const late = now - t.time - trackTimeout(t);
+                const fadeOut = late > 0 ? Math.max(0, 1 - late / CFG.FACE_FADE_OUT_MS) : 1;
+                const fadeIn = Math.min(1, (now - t.shownAt) / CFG.FACE_FADE_IN_MS);
+                const alpha = Math.min(fadeIn, fadeOut);
+                if (alpha <= 0) return;
+                out.push({ ...faceGeom(t.pts), id: t.id, track: t, alpha });
+            });
+            return out;
         }
 
         function faceGeom(f) {
@@ -2036,10 +2124,11 @@
         // zoom + crop tangan) di thread yang sama dengan render, jadi sesekali frame tertahan 60-150 ms.
         // Sekarang: maksimal SATU inference per giliran, dijalankan SETELAH frame tampil (MessageChannel),
         // dan jeda antar inference melebar otomatis kalau model lambat -> render selalu kebagian waktu.
-        // Rasio per 12 giliran: tangan 4 (gesture responsif), wajah 2, zoom wajah jauh 3, zoom tangan jauh 2, objek 1.
+        // Rasio per 14 giliran: tangan 4 (gesture responsif), wajah 2, objek/orang 2, zoom wajah jauh 2, zoom tangan jauh 2,
         // Task yang tidak tersedia (model gagal / frame belum baru) dilewati -> gilirannya dipakai task berikutnya.
-        // + pose 2 dari 14 (hanya jalan kalau ada orang yang belum punya wajah terdeteksi; kalau tidak, gilirannya dilewati).
-        const VISION_PLAN = ['hand', 'face', 'crop', 'hand', 'objects', 'pose', 'farHand', 'hand', 'face', 'crop', 'hand', 'pose', 'crop', 'farHand'];
+        // pose 2 (hanya jalan kalau ada orang yang belum punya wajah terdeteksi; kalau tidak, gilirannya dilewati).
+        // Objek 2x (kotak orang = penjaga agar semua orang tetap punya filter), zoom wajah jauh 2x.
+        const VISION_PLAN = ['hand', 'face', 'objects', 'hand', 'crop', 'pose', 'farHand', 'hand', 'face', 'objects', 'hand', 'pose', 'crop', 'farHand'];
         const lastVideoTimeFor = { hand: -1, face: -1, objects: -1 };
         let planIdx = 0, visionPending = false, visionMs = 0, cropTick = 0;
         const visionChannel = new MessageChannel();
@@ -2223,7 +2312,7 @@
         function runFarCrop() {
             const now = performance.now();
             // Wajah yang tidak terlihat oleh deteksi full frame selama > 300 ms = wajah jauh
-            const far = faceTracks.filter(t => now - t.time <= CFG.FACE_TIMEOUT && now - (t.fullTime || 0) > 300);
+            const far = faceTracks.filter(t => trackAlive(t, now) && now - (t.fullTime || 0) > 300);
             farCount = far.length;
             // Cari face mesh untuk orang jauh yang wajah AKURAT-nya belum ada (estimasi pose/kotak tetap dicarikan wajah aslinya)
             const heads = farPersons().filter(p => !personHasFace(p, 3)).map(personHeadCrop).filter(Boolean);
@@ -2238,7 +2327,7 @@
         // ================== OBJECT DETECTION (semua objek + orang jauh) ==================
         // Kotak objek disimpan dalam piksel video. Dicocokkan ke kotak sebelumnya (label sama + IoU) lalu
         // di-smooth, dan bertahan sebentar saat detektor miss -> kotak tidak kedip / loncat.
-        let objects = [], persons = [], showObjects = CFG.SHOW_OBJECTS, nextObjectId = 1;
+        let objects = [], persons = [], showObjects = CFG.SHOW_OBJECTS, nextObjectId = 1, lastObjectRun = 0, objectGap = 0;
 
         function iou(a, b) {
             const x0 = Math.max(a.x, b.x), y0 = Math.max(a.y, b.y);
@@ -2249,6 +2338,8 @@
 
         function updateObjects(dets) {
             const now = performance.now(), used = new Set();
+            if (lastObjectRun) objectGap = objectGap ? objectGap * 0.8 + (now - lastObjectRun) * 0.2 : now - lastObjectRun;
+            lastObjectRun = now;
             dets.forEach(d => {
                 const c = d.categories && d.categories[0], b = d.boundingBox;
                 if (!c || !b) return;
@@ -2264,14 +2355,18 @@
                     objects.push(o); used.add(o);
                 }
             });
-            objects = objects.filter(o => now - o.time <= CFG.OBJECT_TIMEOUT);
+            // Bertahan beberapa kali jeda deteksi: kalau detektor objek hanya jalan tiap ~400 ms, 1x miss tidak boleh
+            // langsung menghapus orangnya (dulu: kotak hilang -> filter estimasi ikut hilang = kedip)
+            const objTimeout = Math.min(CFG.FACE_TIMEOUT_MAX, Math.max(CFG.OBJECT_TIMEOUT, objectGap * CFG.OBJECT_TIMEOUT_RUNS));
+            objects = objects.filter(o => now - o.time <= objTimeout);
             persons = objects.filter(o => o.label === 'person' && o.score >= CFG.PERSON_SCORE);
             // Jaring pengaman terakhir: setiap orang yang belum punya wajah dari face mesh / pose dapat posisi kepala perkiraan
             // dari kotak badannya -> SEMUA orang yang terdeteksi kena filter, termasuk yang membelakangi / sangat jauh.
             // Sekaligus menjaga wajah orang jauh tetap "hidup" di antara kunjungan zoom yang jarang (tidak kedip).
             if (CFG.BOX_FALLBACK) {
+                // Termasuk orang yang sesaat terlewat detektor (kotaknya masih diingat): filternya tetap dijaga
                 persons
-                    .filter(p => p.score >= CFG.PERSON_ESTIMATE_SCORE && now - p.time < 50)
+                    .filter(p => p.score >= CFG.PERSON_ESTIMATE_SCORE)
                     .forEach(p => { const raw = boxFace(p); if (raw) applyPersonEstimate(p, raw, 'box'); });
                 mergeDuplicateTracks();
             }
@@ -2283,7 +2378,7 @@
             const now = performance.now(), c = mid(raw.eL, raw.eR);
             let best = null, bd = Infinity;
             faceTracks.forEach(t => {
-                if (now - t.time > CFG.FACE_TIMEOUT) return;
+                if (!trackAlive(t, now)) return;
                 const v = screenToVideo(mid(t.tgt.eL, t.tgt.eR));
                 const inHead = v.x >= p.x - p.w * 0.1 && v.x <= p.x + p.w * 1.1 && v.y >= p.y - p.w * 0.3 && v.y <= p.y + Math.max(p.h * 0.4, p.w);
                 const d = D(mid(t.tgt.eL, t.tgt.eR), c);
@@ -2295,23 +2390,10 @@
         // Estimasi kepala (pose / kotak) untuk orang p. Hanya menggeser posisi kalau tidak ada sumber yang lebih akurat
         // baru-baru ini; selain itu cukup menjaga wajahnya tetap tampil.
         function applyPersonEstimate(p, raw, src) {
-            const now = performance.now(), pr = SRC_PRIORITY[src];
+            const now = performance.now();
             const t = trackInPerson(p, raw);
-            if (!t) {
-                if (faceTracks.length < CFG.MAX_TRACKS) {
-                    faceTracks.push({ id: nextFaceId++, tgt: raw, pts: clonePts(raw), time: now, hits: 1, srcTime: { [src]: now }, fullTime: 0, heartAcc: 0 });
-                }
-                return;
-            }
-            if (pr >= trackPriority(t, now)) {
-                Object.keys(raw).forEach(k => {
-                    t.tgt[k].x += (raw[k].x - t.tgt[k].x) * CFG.FACE_LERP;
-                    t.tgt[k].y += (raw[k].y - t.tgt[k].y) * CFG.FACE_LERP;
-                });
-            }
-            t.time = now;
-            t.hits++;
-            t.srcTime[src] = now;
+            if (t) updateFromEstimate(t, raw, src, now);
+            else if (faceTracks.length < CFG.MAX_TRACKS) newTrack(raw, src, now);
         }
 
         // Bangun titik wajah (layar) dari pusat mata, jarak antar mata & sudut, dengan proporsi yang sama seperti face mesh.
@@ -2392,7 +2474,7 @@
         function personHasFace(p, minPr = 1) {
             const now = performance.now();
             return faceTracks.some(t => {
-                if (now - t.time > CFG.FACE_TIMEOUT || trackPriority(t, now) < minPr) return false;
+                if (!trackAlive(t, now) || trackPriority(t, now) < minPr) return false;
                 const c = screenToVideo(mid(t.tgt.eL, t.tgt.eR));
                 return c.x >= p.x && c.x <= p.x + p.w && c.y >= p.y && c.y <= p.y + Math.max(p.h * 0.4, p.w);
             });
@@ -2499,10 +2581,12 @@
 
                 // Aksesoris dipasang ke SEMUA wajah yang terdeteksi
                 faces.forEach(fg => {
+                    ctx.globalAlpha = fg.alpha === undefined ? 1 : fg.alpha;     // fade-in / fade-out, bukan pop
                     if (active.hat) drawHat(fg, t);
-                    if (active.hearts) { if (dt > 0) spawnHearts(fg, dt); drawEyeHearts(fg, t); }
+                    if (active.hearts) { if (dt > 0 && ctx.globalAlpha >= 1) spawnHearts(fg, dt); drawEyeHearts(fg, t); }
                     if (active.glasses) drawGlasses(fg, t);
                 });
+                ctx.globalAlpha = 1;
                 updateDrawHearts(dt);
                 if (now < party.until + CFG.PARTY_FADE) drawPartyText(now);
                 updateDrawConfetti(dt, dt > 0 && now < party.until);

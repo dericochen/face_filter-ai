@@ -22,6 +22,11 @@ Model AI (MediaPipe) dimuat dari internet saat halaman dibuka, jadi butuh koneks
   3. Perkiraan dari kotak badan orang (orang sangat jauh atau semua model lain gagal).
 
   Kalau sumber akurat hilang sesaat (orang menoleh), sumber berikutnya langsung mengambil alih, jadi filter tidak hilang dan tidak dobel.
+- **Anti kedip:**
+  - Setiap wajah mengukur seberapa sering ia dicek, lalu batas "hilang"-nya menyesuaikan (minimal 0,7 detik, maksimal 2 detik).
+  - Kotak orang diingat minimal 1 detik walau detektor melewatkannya beberapa kali.
+  - Saat sumber berganti, posisinya sudah dikoreksi sehingga filter tidak meloncat.
+  - Filter muncul dan hilang dengan fade halus.
 - Kotak dan label objek tampil di layar. Tekan `O` untuk menyembunyikan/menampilkan. Kotak ini **tidak ikut** masuk ke foto.
 - Baris STATE menampilkan jumlah wajah (`FAR n` = wajah jauh), jumlah orang (`PEOPLE`), FPS, dan waktu AI.
 
