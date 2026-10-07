@@ -87,6 +87,7 @@
         <div>GLASSES: <span id="st_glasses" class="off">OFF</span></div>
         <div>HEART EYES: <span id="st_hearts" class="off">OFF</span></div>
         <div>HAT: <span id="st_hat" class="off">OFF</span></div>
+        <div>OBJECTS: <span id="st_objects" class="off">OFF</span></div>
         <div class="hint">
             2x OK SIGN ON EYES: GLASSES<br>
             HEART HANDS: HEART EYES<br>
@@ -94,7 +95,7 @@
             F SIGN (1 HAND): BINUS CELEBRATION<br>
             PEACE SIGN (&#9996;): HOLD TO TAKE PHOTO<br>
             R-FIST + L-OPEN: NEXT STYLE | L-FIST + R-OPEN: PREV STYLE<br>
-            KEYS: [1][2][3] TOGGLE &nbsp;[B] BINUS &nbsp;[V] FOTO &nbsp;[&larr;][&rarr;] STYLE &nbsp;[H] SKELETON &nbsp;[X] CLEAR
+            KEYS: [1][2][3] TOGGLE &nbsp;[B] BINUS &nbsp;[V] FOTO &nbsp;[&larr;][&rarr;] STYLE &nbsp;[H] SKELETON &nbsp;[O] OBJECTS &nbsp;[X] CLEAR
         </div>
         <div class="ui-actions">
             <button id="photo_btn" class="btn primary" type="button">[ FOTO ]</button>
@@ -158,8 +159,8 @@
             FAR_HAND_DETECTION: true,
             HAND_CROP_SIZE: 320,
             // ---- Kamera ----
-            CAMERA_W: 1280,         // 720p: preview tajam, jauh lebih ringan dari 1080p untuk render + inference
-            CAMERA_H: 720,
+            CAMERA_W: 1920,         // 1080p: wajah/tangan orang jauh punya cukup piksel untuk di-zoom (inference tetap pakai crop kecil)
+            CAMERA_H: 1080,
             CAMERA_FPS: 30,
             MAX_DPR: 1.5,           // batas resolusi canvas di layar HiDPI (canvas 2x = 4x piksel per frame)
             // ---- Deteksi wajah jauh / ramai (tiled multi-scale inference) ----
@@ -167,6 +168,14 @@
             SCAN_TILES: [0.5, 0.3], // ukuran tile scan (x lebar video). 0.3 = zoom ~3.3x untuk wajah sangat jauh
             CROP_SIZE: 320,         // resolusi crop yang dikirim ke model
             FAR_TRACK_ZOOM: 3.2,    // crop pelacak = lebar wajah x nilai ini
+            // ---- Deteksi objek (semua objek + menemukan ORANG jauh untuk di-zoom) ----
+            OBJECT_DETECTION: true,
+            OBJECT_SCORE: 0.35,     // skor minimum objek yang ditampilkan
+            OBJECT_MAX: 25,         // maks objek per frame
+            PERSON_SCORE: 0.3,      // orang dengan skor ini dipakai untuk zoom wajah & tangan jauh
+            OBJECT_TIMEOUT: 700,    // ms kotak objek bertahan saat detektor miss (anti kedip)
+            OBJECT_LERP: 0.5,       // smoothing kotak objek
+            SHOW_OBJECTS: true,     // tampilkan kotak + label objek di layar (tidak ikut ke foto). Toggle: tombol [O]
             FACE_CONFIRM_HITS: 2,   // wajah baru tampil setelah terdeteksi 2x (buang false positive)
             FACE_NMS: 0.5,          // dua track lebih dekat dari ini (x lebar wajah) = wajah yang sama, digabung
             // Sign F -> confetti + tulisan BINUS
@@ -185,6 +194,7 @@
         const VISION_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1';
         const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
         const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+        const OBJECT_MODEL = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite';
         const CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[9,10],[10,11],[11,12],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
 
         // ================== DOM ==================
@@ -1583,17 +1593,27 @@
                 el.textContent = active[k] ? `ON // ${styleName(k)} (${styleIdx[k] + 1}/${STYLES[k].length})` : `OFF // ${styleName(k)}`;
                 el.className = active[k] ? 'on' : 'off';
             });
+            updateObjectStat();
+        }
+
+        const objectStatEl = document.getElementById('st_objects');
+        function updateObjectStat() {
+            const count = `${objects.filter(o => o.score >= CFG.OBJECT_SCORE).length} OBJ, ${persons.length} PERSON`;
+            objectStatEl.textContent = !objectDetector ? (objectLoadFailed ? 'UNAVAILABLE' : 'LOADING...')
+                : `${showObjects ? 'ON' : 'OFF'} // ${count}`;
+            objectStatEl.className = objectDetector && showObjects ? 'on' : 'off';
         }
 
         let uiTick = 0;
         function updateMode(g, faces) {
             if (++uiTick % 8) return;
+            updateObjectStat();
             let s;
             if (capState === 'countdown') s = 'FOTO: SIAP-SIAP...';
             else if (g && gest.hold === g.type) s = (g.type === 'next' || g.type === 'prev') ? `STYLE_${g.type.toUpperCase()}: LOCKING...` : `${LABEL[g.type]}: LOCKING...`;
             else if (hands.length) s = `TRACKING ${hands.length} HAND${hands.length > 1 ? 'S' : ''}`;
             else s = 'READY';
-            modeEl.textContent = `${s} | FACES: ${faces.length || 'SEARCHING'}${farCount ? ` (FAR ${farCount})` : ''} | ${Math.round(fps)} FPS | AI ${Math.round(visionMs)}ms`;
+            modeEl.textContent = `${s} | FACES: ${faces.length || 'SEARCHING'}${farCount ? ` (FAR ${farCount})` : ''} | PEOPLE: ${persons.length} | ${Math.round(fps)} FPS | AI ${Math.round(visionMs)}ms`;
         }
 
         // ================== FOTO: COUNTDOWN -> 1 FOTO -> NAMA LENGKAP + NO HP -> SIMPAN ==================
@@ -1871,6 +1891,7 @@
 
         // ================== CAMERA + MEDIAPIPE TASKS ==================
         let handLandmarker = null, farHandLandmarker = null, faceLandmarker = null, farLandmarker = null, farCount = 0;
+        let objectDetector = null, objectLoadFailed = false;
         let lastVisionTs = 0, visionTick = 0, lastVisionRun = 0;
 
         async function startCamera() {
@@ -1900,7 +1921,7 @@
 
         async function initVision() {
             modeEl.textContent = 'LOADING MODELS...';
-            const { FilesetResolver, HandLandmarker, FaceLandmarker } = await import(`${VISION_URL}/vision_bundle.mjs`);
+            const { FilesetResolver, HandLandmarker, FaceLandmarker, ObjectDetector } = await import(`${VISION_URL}/vision_bundle.mjs`);
             const fileset = await FilesetResolver.forVisionTasks(`${VISION_URL}/wasm`);
             const create = async (Task, modelAssetPath, options) => {
                 try {
@@ -1944,12 +1965,26 @@
             if (CFG.FAR_DETECTION) {
                 try {
                     farLandmarker = await create(FaceLandmarker, FACE_MODEL, {
-                        runningMode: 'IMAGE', numFaces: 4, minFaceDetectionConfidence: 0.4, minFacePresenceConfidence: 0.4
+                        // sedikit lebih longgar: wajah jauh yang di-zoom lebih blur. False positive tetap tersaring FACE_CONFIRM_HITS.
+                        runningMode: 'IMAGE', numFaces: 4, minFaceDetectionConfidence: 0.35, minFacePresenceConfidence: 0.35
                     });
                 } catch (e) {
                     console.error('Far-face landmarker failed, only near faces will be detected', e);
                 }
             }
+            // Detektor objek umum (80 kelas COCO: orang, HP, botol, kursi, tas, ...).
+            // Kotak "person"-nya dipakai untuk menemukan orang yang JAUH, lalu wajah & tangannya di-zoom.
+            if (CFG.OBJECT_DETECTION && ObjectDetector) {
+                try {
+                    objectDetector = await create(ObjectDetector, OBJECT_MODEL, {
+                        scoreThreshold: Math.min(CFG.OBJECT_SCORE, CFG.PERSON_SCORE), maxResults: CFG.OBJECT_MAX
+                    });
+                } catch (e) {
+                    console.error('Object detector failed, far detection uses tile scan only', e);
+                }
+            }
+            objectLoadFailed = !objectDetector;
+            updateObjectStat();
             if (!handLandmarker && !faceLandmarker) throw new Error('Model AI gagal dimuat (cek koneksi internet)');
         }
 
@@ -1958,9 +1993,10 @@
         // zoom + crop tangan) di thread yang sama dengan render, jadi sesekali frame tertahan 60-150 ms.
         // Sekarang: maksimal SATU inference per giliran, dijalankan SETELAH frame tampil (MessageChannel),
         // dan jeda antar inference melebar otomatis kalau model lambat -> render selalu kebagian waktu.
-        // Rasio: tangan 1/2 (gesture responsif), wajah 1/4, crop wajah jauh 1/8, crop tangan jauh 1/8.
-        const VISION_PLAN = ['hand', 'face', 'hand', 'crop', 'hand', 'face', 'hand', 'farHand'];
-        const lastVideoTimeFor = { hand: -1, face: -1 };
+        // Rasio per 12 giliran: tangan 4 (gesture responsif), wajah 2, zoom wajah jauh 3, zoom tangan jauh 2, objek 1.
+        // Task yang tidak tersedia (model gagal / frame belum baru) dilewati -> gilirannya dipakai task berikutnya.
+        const VISION_PLAN = ['hand', 'face', 'crop', 'hand', 'objects', 'farHand', 'hand', 'face', 'crop', 'hand', 'crop', 'farHand'];
+        const lastVideoTimeFor = { hand: -1, face: -1, objects: -1 };
         let planIdx = 0, visionPending = false, visionMs = 0, cropTick = 0;
         const visionChannel = new MessageChannel();
         visionChannel.port1.onmessage = () => { visionPending = false; runVision(performance.now()); };
@@ -2005,6 +2041,13 @@
                     lastVideoTimeFor.face = video.currentTime;
                     const r = faceLandmarker.detectForVideo(video, nextVisionTs());
                     updateFaces((r && r.faceLandmarks) || [], 'full');
+                    return true;
+                }
+                if (task === 'objects') {
+                    if (!objectDetector || video.currentTime === lastVideoTimeFor.objects) return false;
+                    lastVideoTimeFor.objects = video.currentTime;
+                    const r = objectDetector.detectForVideo(video, nextVisionTs());
+                    updateObjects((r && r.detections) || []);
                     return true;
                 }
                 if (task === 'crop') {
@@ -2059,11 +2102,18 @@
         // lalu digabung ke hand tracker spasial agar tidak bentrok dengan deteksi full-frame.
         const handCropCanvas = document.createElement('canvas');
         const handCropCtx = handCropCanvas.getContext('2d', { willReadFrequently: false });
-        let handScanIdx = 0;
+        let handScanIdx = 0, handPersonIdx = 0, handTick = 0;
+        // Kalau ada orang jauh: 3 dari 4 giliran zoom ke badan atas orang itu (tempat tangan), 1 giliran scan tile.
         function runFarHandCrop() {
-            const tiles = scanTiles();
-            if (!tiles.length) return;
-            const crop = tiles[handScanIdx++ % tiles.length];
+            const targets = farPersons().map(personBodyCrop).filter(Boolean);
+            let crop;
+            if (targets.length && handTick++ % 4 !== 3) {
+                crop = targets[handPersonIdx++ % targets.length];
+            } else {
+                const tiles = scanTiles();
+                if (!tiles.length) return;
+                crop = tiles[handScanIdx++ % tiles.length];
+            }
             const C = CFG.HAND_CROP_SIZE;
             if (handCropCanvas.width !== C) { handCropCanvas.width = C; handCropCanvas.height = C; }   // jangan alokasi ulang tiap panggilan
             handCropCtx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, C, C);
@@ -2116,15 +2166,127 @@
             updateFaces(list, 'crop');
         }
 
-        // Satu crop per giliran. Kalau ada wajah jauh: 2 dari 3 giliran untuk melacaknya, 1 untuk scan wajah baru.
+        // Satu crop per giliran, bergiliran antara 3 sumber:
+        //  - TRACK : wajah jauh yang sudah ditemukan (agar terus terlacak)
+        //  - PERSON: kepala orang yang terdeteksi detektor objek tapi wajahnya BELUM ketemu (menemukan wajah jauh baru, cepat & terarah)
+        //  - SCAN  : tile bergiliran ke seluruh frame (cadangan kalau detektor objek tidak menemukan orangnya)
+        const CROP_PATTERN = ['track', 'person', 'track', 'person', 'scan'];
+        let personIdx = 0;
         function runFarCrop() {
             const now = performance.now();
             // Wajah yang tidak terlihat oleh deteksi full frame selama > 300 ms = wajah jauh
             const far = faceTracks.filter(t => now - t.time <= CFG.FACE_TIMEOUT && now - (t.fullTime || 0) > 300);
             farCount = far.length;
-            const tiles = scanTiles();
-            const scanSlot = !far.length || cropTick++ % 3 === 2;
-            detectCrop(scanSlot ? tiles[scanIdx++ % tiles.length] : trackCrop(far[trackIdx++ % far.length]));
+            const heads = farPersons().filter(p => !personHasFace(p)).map(personHeadCrop).filter(Boolean);
+            for (let i = 0; i < CROP_PATTERN.length; i++) {
+                const kind = CROP_PATTERN[cropTick++ % CROP_PATTERN.length];
+                if (kind === 'track' && far.length) return detectCrop(trackCrop(far[trackIdx++ % far.length]));
+                if (kind === 'person' && heads.length) return detectCrop(heads[personIdx++ % heads.length]);
+                if (kind === 'scan') { const tiles = scanTiles(); if (tiles.length) return detectCrop(tiles[scanIdx++ % tiles.length]); }
+            }
+        }
+
+        // ================== OBJECT DETECTION (semua objek + orang jauh) ==================
+        // Kotak objek disimpan dalam piksel video. Dicocokkan ke kotak sebelumnya (label sama + IoU) lalu
+        // di-smooth, dan bertahan sebentar saat detektor miss -> kotak tidak kedip / loncat.
+        let objects = [], persons = [], showObjects = CFG.SHOW_OBJECTS, nextObjectId = 1;
+
+        function iou(a, b) {
+            const x0 = Math.max(a.x, b.x), y0 = Math.max(a.y, b.y);
+            const x1 = Math.min(a.x + a.w, b.x + b.w), y1 = Math.min(a.y + a.h, b.y + b.h);
+            const inter = Math.max(0, x1 - x0) * Math.max(0, y1 - y0);
+            return inter / (a.w * a.h + b.w * b.h - inter || 1);
+        }
+
+        function updateObjects(dets) {
+            const now = performance.now(), used = new Set();
+            dets.forEach(d => {
+                const c = d.categories && d.categories[0], b = d.boundingBox;
+                if (!c || !b) return;
+                const box = { label: c.categoryName || c.displayName || 'object', score: c.score, x: b.originX, y: b.originY, w: b.width, h: b.height };
+                let best = null, bestIou = 0.3;
+                objects.forEach(o => { if (!used.has(o) && o.label === box.label) { const v = iou(o, box); if (v > bestIou) { bestIou = v; best = o; } } });
+                if (best) {
+                    const a = CFG.OBJECT_LERP;
+                    ['x', 'y', 'w', 'h'].forEach(k => { best[k] += (box[k] - best[k]) * a; });
+                    best.score = box.score; best.time = now; used.add(best);
+                } else {
+                    const o = { ...box, id: nextObjectId++, time: now };
+                    objects.push(o); used.add(o);
+                }
+            });
+            objects = objects.filter(o => now - o.time <= CFG.OBJECT_TIMEOUT);
+            persons = objects.filter(o => o.label === 'person' && o.score >= CFG.PERSON_SCORE);
+        }
+
+        // Orang yang perlu di-zoom = yang badannya kecil di frame (jauh). Orang dekat sudah tertangani deteksi full frame.
+        function farPersons() {
+            const vh = video.videoHeight;
+            return persons.filter(p => p.h < vh * 0.75);
+        }
+
+        // Sudah ada wajah (track) di area kepala orang ini?
+        function personHasFace(p) {
+            const now = performance.now();
+            return faceTracks.some(t => {
+                if (now - t.time > CFG.FACE_TIMEOUT) return false;
+                const c = screenToVideo(mid(t.tgt.eL, t.tgt.eR));
+                return c.x >= p.x && c.x <= p.x + p.w && c.y >= p.y && c.y <= p.y + Math.max(p.h * 0.4, p.w);
+            });
+        }
+
+        function clampCrop(cx, cy, s) {
+            const vw = video.videoWidth, vh = video.videoHeight;
+            s = Math.round(Math.min(Math.min(vw, vh), s));
+            return {
+                sx: Math.min(vw - s, Math.max(0, Math.round(cx - s / 2))),
+                sy: Math.min(vh - s, Math.max(0, Math.round(cy - s / 2))),
+                sw: s, sh: s
+            };
+        }
+
+        // Crop persegi di sekitar kepala: lebar kepala ~ 1/3 lebar badan, kepala di ~1/8 atas kotak orang
+        function personHeadCrop(p) {
+            if (p.w < 8 || p.h < 8) return null;
+            const s = Math.max(140, p.w * 1.25, p.h * 0.42);
+            return clampCrop(p.x + p.w / 2, p.y + Math.min(p.h * 0.13, p.w * 0.45), s);
+        }
+
+        // Crop badan atas + jangkauan lengan (tangan untuk gesture biasanya di depan dada / samping wajah)
+        function personBodyCrop(p) {
+            if (p.w < 8 || p.h < 8) return null;
+            const s = Math.max(200, p.w * 2.2, p.h * 0.8);
+            return clampCrop(p.x + p.w / 2, p.y + Math.min(p.h * 0.38, s * 0.4), s);
+        }
+
+        // Kotak video (px) -> layar (mirror + cover)
+        function videoBoxToScreen(o) {
+            const sx = layout.dw / video.videoWidth, sy = layout.dh / video.videoHeight;
+            return { x: W - ((o.x + o.w) * sx + layout.ox), y: o.y * sy + layout.oy, w: o.w * sx, h: o.h * sy };
+        }
+
+        const OBJECT_COLORS = ['#00f0ff', '#ffd400', '#ff6ad5', '#ff8a3d', '#b388ff', '#69f0ae'];
+        function drawObjects() {
+            if (!showObjects || !objects.length) return;
+            ctx.save();
+            ctx.lineWidth = 2;
+            ctx.font = 'bold 13px "Courier New", monospace';
+            ctx.textBaseline = 'top';
+            objects.forEach(o => {
+                if (o.score < CFG.OBJECT_SCORE) return;
+                const r = videoBoxToScreen(o);
+                const color = o.label === 'person' ? '#7dffb2' : OBJECT_COLORS[o.label.length % OBJECT_COLORS.length];
+                ctx.strokeStyle = color;
+                ctx.setLineDash(o.label === 'person' ? [] : [6, 4]);
+                ctx.strokeRect(r.x, r.y, r.w, r.h);
+                const text = `${o.label.toUpperCase()} ${Math.round(o.score * 100)}%`;
+                const tw = ctx.measureText(text).width + 8, ty = r.y >= 18 ? r.y - 18 : r.y;
+                ctx.fillStyle = 'rgba(0,0,0,0.65)';
+                ctx.fillRect(r.x, ty, tw, 18);
+                ctx.fillStyle = color;
+                ctx.fillText(text, r.x + 4, ty + 2);
+            });
+            ctx.restore();
         }
 
         // ================== MAIN LOOP ==================
@@ -2150,6 +2312,7 @@
             renderScene(mainCtx, [dpr, 0, 0, dpr, 0, 0], now, dtMs / 1000, faces);
 
             // HUD hanya di layar, tidak pernah ikut di foto
+            drawObjects();
             if (showSkeleton) drawSkeletons();
             if (g && gest.hold === g.type) drawHUDCircle(g.x, g.y, Math.min(1, gest.time / holdNeeded(g.type)), GESTURE_COLOR[g.type]);
             updateMode(g, faces);
@@ -2207,6 +2370,7 @@
             else if (e.key === 'ArrowRight') cycleStyle(1);
             else if (e.key === 'ArrowLeft') cycleStyle(-1);
             else if (k === 'h') showSkeleton = !showSkeleton;
+            else if (k === 'o') { showObjects = !showObjects; toast(showObjects ? 'OBJECT DETECTION: TAMPIL' : 'OBJECT DETECTION: SEMBUNYI'); updateObjectStat(); }
             else if (k === 'x') {
                 Object.keys(active).forEach(a => { active[a] = false; });
                 hearts.length = 0;
@@ -2219,7 +2383,7 @@
         window.addEventListener('pagehide', () => {
             const s = video.srcObject;
             if (s) s.getTracks().forEach(tr => tr.stop());
-            [handLandmarker, farHandLandmarker, faceLandmarker, farLandmarker].forEach(l => { try { if (l) l.close(); } catch (_) { /* ignore */ } });
+            [handLandmarker, farHandLandmarker, faceLandmarker, farLandmarker, objectDetector].forEach(l => { try { if (l) l.close(); } catch (_) { /* ignore */ } });
             if (photoUrl) URL.revokeObjectURL(photoUrl);
         });
 
@@ -2227,7 +2391,12 @@
         updateStats();
         requestAnimationFrame(frame);
         startCamera().catch(err => { console.error(err); modeEl.textContent = 'CAMERA_ERROR: ' + cameraErrorText(err); });
-        initVision().catch(err => { console.error(err); modeEl.textContent = 'VISION_ERROR: ' + ((err && err.message) || err); });
+        initVision().catch(err => {
+            console.error(err);
+            objectLoadFailed = !objectDetector;
+            updateObjectStat();
+            modeEl.textContent = 'VISION_ERROR: ' + ((err && err.message) || err);
+        });
     </script>
 </body>
 </html>
