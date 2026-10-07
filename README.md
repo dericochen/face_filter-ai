@@ -11,6 +11,20 @@ Filter wajah berbasis kamera (kacamata, heart eyes, topi, gesture, BINUS@Medan) 
 
 Model AI (MediaPipe) dimuat dari internet saat halaman dibuka, jadi butuh koneksi internet ketika start.
 
+## Deteksi jarak jauh dan objek
+
+- Kamera diminta 1920×1080 supaya orang yang berdiri jauh tetap punya cukup piksel.
+- Detektor objek (EfficientDet-Lite0, 80 kelas COCO: orang, HP, botol, kursi, tas, dll.) mencari semua **orang** di frame. Kepala dan badan atas orang yang jauh lalu di-zoom, sehingga wajah dan tangannya ikut terdeteksi. Filter dan gesture jadi bekerja untuk orang yang jauh juga.
+- Kalau detektor objek tidak menemukan orangnya, seluruh frame tetap di-scan bergiliran sebagai cadangan.
+- **Semua orang yang terdeteksi kena filter.** Posisi kepala diambil dari sumber paling akurat yang tersedia:
+  1. Face mesh (wajah menghadap kamera, dekat maupun jauh lewat zoom).
+  2. Model pose (mata/hidung, atau telinga kalau orang menoleh/membelakangi).
+  3. Perkiraan dari kotak badan orang (orang sangat jauh atau semua model lain gagal).
+
+  Kalau sumber akurat hilang sesaat (orang menoleh), sumber berikutnya langsung mengambil alih, jadi filter tidak hilang dan tidak dobel.
+- Kotak dan label objek tampil di layar. Tekan `O` untuk menyembunyikan/menampilkan. Kotak ini **tidak ikut** masuk ke foto.
+- Baris STATE menampilkan jumlah wajah (`FAR n` = wajah jauh), jumlah orang (`PEOPLE`), FPS, dan waktu AI.
+
 ## Alur foto
 
 1. Pilih filter dengan gesture atau keyboard (`1` kacamata, `2` heart eyes, `3` topi, `←`/`→` ganti style, `B` BINUS, `X` matikan semua).
