@@ -28,6 +28,7 @@ Model AI (MediaPipe) dimuat dari internet saat halaman dibuka, jadi butuh koneks
   - Saat sumber berganti, posisinya sudah dikoreksi sehingga filter tidak meloncat.
   - Filter muncul dan hilang dengan fade halus.
 - Kotak dan label objek tampil di layar. Tekan `O` untuk menyembunyikan/menampilkan. Kotak ini **tidak ikut** masuk ke foto.
+- Detektor objek jalan di thread terpisah (Web Worker) dengan CPU, model int8. Mode GPU tidak dipakai untuk model ini karena di sebagian driver hasilnya 0 objek tanpa pesan error.
 - Baris STATE menampilkan jumlah wajah (`FAR n` = wajah jauh), jumlah orang (`PEOPLE`), FPS, dan waktu AI.
 
 ## Alur foto
@@ -49,6 +50,20 @@ Kalau nama file itu sudah ada, file baru menjadi `foto-jessi-tan-08121231231-2.j
 Foto disimpan dalam resolusi asli kamera, JPEG kualitas 95, dengan mirror yang sama seperti preview dan semua filter yang sedang aktif. Skeleton tangan dan lingkaran progress gesture tidak ikut masuk ke foto.
 
 Browser yang tidak mendukung pemilihan folder akan menyimpan foto ke folder **Downloads**.
+
+## Background virtual
+
+Background di belakang orang diganti gambar (segmentasi orang dengan MediaPipe Selfie Segmenter, jalan di Web Worker). Ikut masuk ke foto.
+
+- **Ganti gambar:** klik **BACKGROUND: GAMBAR**, pilih file gambar. Pilihan ini diingat browser, jadi cukup sekali.
+- Alternatif: simpan gambar sebagai `assets/background.png`. Cara ini hanya terbaca kalau aplikasi dibuka lewat server lokal (`python -m http.server 8000`), bukan dengan klik dua kali `index.html`.
+- **Tata letak:** langit gradasi biru di atas, gambar di bawah selebar layar. Area putih pada gambar ikut menjadi langit, jadi gambar gedung berlatar putih tetap menyatu.
+- Tanpa gambar, dipakai background bawaan (gradasi + siluet gedung).
+- Tekan `G` untuk mematikan/menyalakan background (kembali ke kamera asli).
+
+## Tulisan BINUS@Medan
+
+Muncul dengan gesture F atau tombol `B`, tampil 10 detik, selalu di **tengah atas** layar. Posisinya tidak mengikuti orang dan tidak bergerak.
 
 ## Troubleshooting
 

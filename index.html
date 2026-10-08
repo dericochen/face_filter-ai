@@ -88,6 +88,7 @@
         <div>HEART EYES: <span id="st_hearts" class="off">OFF</span></div>
         <div>HAT: <span id="st_hat" class="off">OFF</span></div>
         <div>OBJECTS: <span id="st_objects" class="off">OFF</span></div>
+        <div>BACKGROUND: <span id="st_bg" class="off">OFF</span></div>
         <div class="hint">
             2x OK SIGN ON EYES: GLASSES<br>
             HEART HANDS: HEART EYES<br>
@@ -95,11 +96,13 @@
             F SIGN (1 HAND): BINUS CELEBRATION<br>
             PEACE SIGN (&#9996;): HOLD TO TAKE PHOTO<br>
             R-FIST + L-OPEN: NEXT STYLE | L-FIST + R-OPEN: PREV STYLE<br>
-            KEYS: [1][2][3] TOGGLE &nbsp;[B] BINUS &nbsp;[V] FOTO &nbsp;[&larr;][&rarr;] STYLE &nbsp;[H] SKELETON &nbsp;[O] OBJECTS &nbsp;[X] CLEAR
+            KEYS: [1][2][3] TOGGLE &nbsp;[B] BINUS &nbsp;[V] FOTO &nbsp;[&larr;][&rarr;] STYLE &nbsp;[H] SKELETON &nbsp;[O] OBJECTS &nbsp;[G] BACKGROUND &nbsp;[X] CLEAR
         </div>
         <div class="ui-actions">
             <button id="photo_btn" class="btn primary" type="button">[ FOTO ]</button>
             <button id="folder_btn" class="btn" type="button" title="Folder tempat foto disimpan">FOLDER: PILIH</button>
+            <button id="bg_btn" class="btn" type="button" title="Pilih gambar background (diingat)">BACKGROUND: GAMBAR</button>
+            <input id="bg_file" type="file" accept="image/*" hidden>
         </div>
     </div>
 
@@ -182,6 +185,17 @@
             OBJECT_TIMEOUT_RUNS: 4, // ...atau selama 4x jeda antar deteksi objek (detektor bisa melewatkan 2-3 deteksi berturut-turut)
             OBJECT_LERP: 0.5,       // smoothing kotak objek
             SHOW_OBJECTS: true,     // tampilkan kotak + label objek di layar (tidak ikut ke foto). Toggle: tombol [O]
+            // Detektor objek & segmentasi background jalan di Web Worker (thread terpisah) dengan delegate CPU.
+            // Alasan: EfficientDet di delegate GPU mengembalikan 0 objek di sebagian driver (gagal diam-diam, tanpa error).
+            OBJECT_INPUT_W: 640,    // frame dikecilkan ke 640x360 sebelum dikirim ke worker (model internal 320x320)
+            OBJECT_INTERVAL_MS: 120,
+            // ---- Background virtual (orang dipisah dari background, background diganti gambar) ----
+            BACKGROUND: true,       // toggle: tombol [G]
+            BG_IMAGE: 'assets/background.png',   // gambar background (kalau tidak ada / tidak bisa dibaca -> background bawaan)
+            SEG_INPUT_W: 320,       // resolusi input segmentasi (320x180); mask di-upscale halus ke resolusi kamera
+            SEG_INTERVAL_MS: 30,    // ~30 mask per detik
+            SEG_LOW: 0.35, SEG_HIGH: 0.75,   // tepi mask: < LOW = background, > HIGH = orang, di antaranya halus
+            SEG_KEEP: 0.35,         // bobot mask sebelumnya (meredam kedip di tepi rambut/badan)
             FACE_CONFIRM_HITS: 2,   // wajah baru tampil setelah terdeteksi 2x (buang false positive)
             FACE_NMS: 0.5,          // dua track lebih dekat dari ini (x lebar wajah) = wajah yang sama, digabung
             SRC_HOLD_MS: 1500,      // selama ini sejak terakhir dilihat sumber akurat (face mesh), estimasi tidak boleh menggeser posisinya
@@ -194,7 +208,8 @@
             F_EYE_CLEAR: 1.3,       // lingkaran jempol-telunjuk harus sejauh ini dari mata (x jarak mata), supaya beda dari gesture kacamata
             PARTY_DURATION: 10000,  // ms tulisan tampil setelah sign F (berbasis waktu, bukan jumlah frame; diperpanjang selama sign F ditahan)
             PARTY_FADE: 700,        // ms fade out
-            LOGO_HEAD_WIDTH: 3.0,   // lebar tulisan = lebar kepala x nilai ini (35%-75% lebar layar, mengecil kalau ruang di atas kepala sempit)
+            LOGO_WIDTH: 0.42,       // tulisan BINUS: posisi TETAP di tengah atas, lebar 42% layar...
+            LOGO_MAX_H: 0.24,       // ...tapi tinggi maksimal 24% layar (layar portrait / sempit)
             CONFETTI_RAIN: 45,      // confetti per detik yang jatuh dari atas selama aktif
             MAX_CONFETTI: 600,
             // Foto
@@ -207,7 +222,9 @@
         const HAND_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
         const FACE_MODEL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
         const POSE_MODEL = 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task';
-        const OBJECT_MODEL = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.tflite';
+        // int8: dirancang untuk CPU (4.6 MB, ~75 ms per deteksi di worker)
+        const OBJECT_MODEL = 'https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite';
+        const SEG_MODEL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
         const CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[9,10],[10,11],[11,12],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
 
         // ================== DOM ==================
@@ -1467,7 +1484,7 @@
 
         function burstConfetti() {
             const k = H / 720;
-            const ox = party.seen ? party.x : W / 2, oy = party.seen ? party.y : H * 0.3;
+            const L = partyLayout(), ox = L.cx, oy = L.cy;    // confetti meledak dari tulisan BINUS
             for (let i = 0; i < 150; i++) {
                 const a = -Math.PI * (0.05 + Math.random() * 0.9), sp = (350 + Math.random() * 650) * k;
                 addConfetti(ox, oy, Math.cos(a) * sp, Math.sin(a) * sp);
@@ -1517,54 +1534,20 @@
 
         const easeOutBack = x => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
 
-        // BINUS MEDAN: kalau ramai selalu di atas orang yang paling tengah.
-        // Kalau sendiri, mengikuti posisi orang tersebut.
-        function updatePartyAnchor(faces) {
-            if (!faces.length) return;
-            let fg;
-            if (faces.length === 1) {
-                fg = faces[0];
-            } else {
-                const central = faces.reduce((best, f) =>
-                    Math.abs(f.cx - W / 2) < Math.abs(best.cx - W / 2) ? f : best
-                );
-                // Hysteresis: tetap di orang sebelumnya kecuali orang lain JELAS lebih di tengah,
-                // supaya tulisan tidak loncat-loncat antara dua orang yang sama-sama dekat tengah.
-                const cur = faces.find(f => f.id === party.faceId);
-                fg = (cur && Math.abs(cur.cx - W / 2) - Math.abs(central.cx - W / 2) < W * 0.08) ? cur : central;
-            }
-            party.faceId = fg.id;
-            const tx = fg.hatX, ty = fg.hatY - fg.head * (active.hat ? 1.1 : 0.72);
-            // Batas aman: puncak kepala tertinggi (termasuk topi kalau aktif) & dagu terendah dari SEMUA orang,
-            // supaya tulisan tidak pernah menutupi wajah siapa pun.
-            const lim = { top: Infinity, bottom: -Infinity, left: Infinity, right: -Infinity, midY: 0 };
-            const halfW = active.hat ? 1.0 : 0.6;          // setengah lebar kepala (+ lebar topi kalau aktif)
-            faces.forEach(f => {
-                lim.top = Math.min(lim.top, f.top.y - f.head * (active.hat ? 0.8 : 0.1));
-                lim.bottom = Math.max(lim.bottom, f.chinY + f.head * 0.05);
-                lim.left = Math.min(lim.left, f.cx - f.head * halfW);
-                lim.right = Math.max(lim.right, f.cx + f.head * halfW);
-                lim.midY += f.cy / faces.length;
-            });
-            if (!party.seen) { party.x = tx; party.y = ty; party.lim = { ...lim }; party.seen = true; }
-            party.x += (tx - party.x) * 0.25; party.y += (ty - party.y) * 0.25;
-            Object.keys(lim).forEach(k => { party.lim[k] += (lim[k] - party.lim[k]) * 0.25; });
-            party.headW = fg.head;
-        }
-
+        // BINUS MEDAN: posisi TETAP di tengah atas layar (tidak mengikuti orang, tidak goyang / pindah-pindah).
+        // Ukuran juga tetap (relatif ke layar), jadi hasil di layar dan di foto selalu sama.
         function drawPartyText(now) {
             const t = (now - party.start) / 1000;
             let alpha = 1;
             if (now > party.until) alpha = 1 - (now - party.until) / CFG.PARTY_FADE;
             if (alpha <= 0) return;
-            const { cx, cy: cy0, w, h } = partyLayout();
-            const s = easeOutBack(Math.min(1, t / 0.55));
-            const cy = cy0 + Math.sin(t * 3) * h * 0.02;
+            const { cx, cy, w, h } = partyLayout();
+            const s = easeOutBack(Math.min(1, t / 0.55));     // hanya animasi muncul (membesar di tempat), posisi tidak berubah
             ctx.save();
             ctx.globalAlpha = alpha;
-            ctx.translate(cx, cy); ctx.rotate(Math.sin(t * 2) * 0.025 - 0.02); ctx.scale(s, s);
+            ctx.translate(cx, cy); ctx.scale(s, s);
             ctx.drawImage(logoCanvas, -w / 2, -h / 2, w, h);
-            // Kilau bintang di sekitar tulisan
+            // Kilau bintang di sekitar tulisan (berkelip di tempat)
             for (let i = 0; i < 6; i++) {
                 const a = 0.5 + 0.5 * Math.sin(t * 5 + i * 1.9);
                 ctx.fillStyle = `rgba(255,255,255,${0.9 * a})`;
@@ -1574,47 +1557,12 @@
             ctx.restore();
         }
 
-        // Posisi & ukuran tulisan BINUS (koordinat layar, tanpa animasi)
+        // Posisi & ukuran tulisan BINUS (koordinat layar). Tengah atas, ada jarak dari tepi atas.
         function partyLayout() {
-            // Ukuran ikut kepala, 35%-75% lebar layar (tidak terlalu besar)
-            const ratio = LOGO_H / LOGO_W, margin = Math.max(8, H * 0.025);
-            let w = Math.min(W * 0.75, Math.max(W * 0.35, (party.headW || W * 0.3) * CFG.LOGO_HEAD_WIDTH));
-            let h = w * ratio, cx, cy;
-            if (!party.seen) {
-                cx = W / 2; cy = Math.max(margin + h / 2, H * 0.22);
-            } else {
-                // Prioritas: atas kepala -> (dikecilkan) atas kepala -> bawah dagu -> samping grup.
-                // 0.88 = sisa ruang untuk animasi pop (overshoot) + goyang.
-                const L = party.lim, minW = W * 0.22;
-                const roomAbove = (L.top - margin * 2) * 0.88;            // tinggi tersedia
-                const roomBelow = (H - L.bottom - margin * 2) * 0.88;
-                const roomLeft = (L.left - margin * 2) * 0.88;            // lebar tersedia
-                const roomRight = (W - L.right - margin * 2) * 0.88;
-                const fitsV = room => room / ratio >= minW;
-                if (h <= roomAbove || fitsV(roomAbove)) {
-                    h = Math.min(h, roomAbove); w = h / ratio;
-                    cx = party.x;
-                    cy = Math.min(party.y, L.top - margin) - h / 2;       // tepi bawah tulisan di atas kepala tertinggi
-                } else if (fitsV(roomBelow)) {
-                    h = Math.min(h, roomBelow); w = h / ratio;
-                    cx = party.x;
-                    cy = L.bottom + margin + h / 2;                       // tepi atas tulisan di bawah dagu terendah
-                } else if (Math.max(roomLeft, roomRight) >= minW) {
-                    const left = roomLeft >= roomRight;
-                    w = Math.min(w, left ? roomLeft : roomRight); h = w * ratio;
-                    cx = left ? L.left - margin - w / 2 : L.right + margin + w / 2;
-                    cy = L.midY;
-                } else {
-                    // Wajah memenuhi seluruh frame: tidak ada tempat kosong. Pakai ukuran terkecil di sisi terluas.
-                    w = minW; h = w * ratio;
-                    cx = party.x;
-                    cy = roomAbove >= roomBelow ? margin + h / 2 : H - margin - h / 2;
-                }
-            }
-            // Jangan pernah keluar frame
-            cx = Math.min(W - w / 2 - margin, Math.max(w / 2 + margin, cx));
-            cy = Math.min(H - h / 2 - margin, Math.max(h / 2 + margin, cy));
-            return { cx, cy, w, h };
+            const ratio = LOGO_H / LOGO_W, margin = Math.max(10, H * 0.03);
+            const w = Math.min(W * CFG.LOGO_WIDTH, (H * CFG.LOGO_MAX_H) / ratio);
+            const h = w * ratio;
+            return { cx: W / 2, cy: margin + h / 2, w, h };
         }
 
         // ================== RENDER ==================
@@ -1719,10 +1667,15 @@
         const objectStatEl = document.getElementById('st_objects');
         function updateObjectStat() {
             const count = `${objects.filter(o => o.score >= CFG.OBJECT_SCORE).length} OBJ, ${persons.length} PERSON`;
-            objectStatEl.textContent = !objectDetector ? (objectLoadFailed ? 'UNAVAILABLE' : 'LOADING...')
-                : `${showObjects ? 'ON' : 'OFF'} // ${count}`;
-            objectStatEl.className = objectDetector && showObjects ? 'on' : 'off';
+            const ready = !!(objectWorker && objectWorker.ready);
+            objectStatEl.textContent = !CFG.OBJECT_DETECTION ? 'DISABLED'
+                : objectWorker && objectWorker.failed ? 'UNAVAILABLE'
+                : !ready ? 'LOADING...'
+                : `${showObjects ? 'ON' : 'OFF'} // ${count}${debugAiMs(objectWorker)}`;
+            objectStatEl.className = ready && showObjects ? 'on' : 'off';
+            updateBgStat();
         }
+        const debugAiMs = w => (w && w.ms ? ` // ${Math.round(w.ms)}ms` : '');
 
         let uiTick = 0;
         function updateMode(g, faces) {
@@ -2011,7 +1964,7 @@
 
         // ================== CAMERA + MEDIAPIPE TASKS ==================
         let handLandmarker = null, farHandLandmarker = null, faceLandmarker = null, farLandmarker = null, farCount = 0;
-        let objectDetector = null, objectLoadFailed = false, poseLandmarker = null;
+        let objectDetector = null, poseLandmarker = null;
         let lastVisionTs = 0, visionTick = 0, lastVisionRun = 0;
 
         async function startCamera() {
@@ -2041,7 +1994,7 @@
 
         async function initVision() {
             modeEl.textContent = 'LOADING MODELS...';
-            const { FilesetResolver, HandLandmarker, FaceLandmarker, ObjectDetector, PoseLandmarker } = await import(`${VISION_URL}/vision_bundle.mjs`);
+            const { FilesetResolver, HandLandmarker, FaceLandmarker, PoseLandmarker } = await import(`${VISION_URL}/vision_bundle.mjs`);
             const fileset = await FilesetResolver.forVisionTasks(`${VISION_URL}/wasm`);
             const create = async (Task, modelAssetPath, options) => {
                 try {
@@ -2094,20 +2047,10 @@
             }
             // Detektor objek umum (80 kelas COCO: orang, HP, botol, kursi, tas, ...).
             // Kotak "person"-nya dipakai untuk menemukan orang yang JAUH, lalu wajah & tangannya di-zoom.
-            if (CFG.OBJECT_DETECTION && ObjectDetector) {
-                try {
-                    objectDetector = await create(ObjectDetector, OBJECT_MODEL, {
-                        scoreThreshold: Math.min(CFG.OBJECT_SCORE, CFG.PERSON_SCORE), maxResults: CFG.OBJECT_MAX
-                    });
-                } catch (e) {
-                    console.error('Object detector failed, far detection uses tile scan only', e);
-                }
-            }
-            objectLoadFailed = !objectDetector;
-            updateObjectStat();
+            // (Detektor objek & segmentasi background dimuat terpisah di Web Worker, lihat AI WORKERS.)
             // Pose (mode IMAGE, dipakai pada zoom badan orang): menemukan kepala orang yang menoleh / membelakangi / terlalu jauh
             // untuk face mesh, supaya mereka tetap kena filter.
-            if (CFG.POSE_FALLBACK && PoseLandmarker && objectDetector) {
+            if (CFG.POSE_FALLBACK && PoseLandmarker && CFG.OBJECT_DETECTION) {
                 try {
                     poseLandmarker = await create(PoseLandmarker, POSE_MODEL, {
                         runningMode: 'IMAGE', numPoses: 2, minPoseDetectionConfidence: 0.4, minPosePresenceConfidence: 0.4
@@ -2124,12 +2067,13 @@
         // zoom + crop tangan) di thread yang sama dengan render, jadi sesekali frame tertahan 60-150 ms.
         // Sekarang: maksimal SATU inference per giliran, dijalankan SETELAH frame tampil (MessageChannel),
         // dan jeda antar inference melebar otomatis kalau model lambat -> render selalu kebagian waktu.
-        // Rasio per 14 giliran: tangan 4 (gesture responsif), wajah 2, objek/orang 2, zoom wajah jauh 2, zoom tangan jauh 2,
+        // Rasio per 14 giliran: tangan 4 (gesture responsif), wajah 2, zoom wajah jauh 4, zoom tangan jauh 2,
+        // (deteksi objek & segmentasi background TIDAK di sini: jalan paralel di Web Worker)
         // Task yang tidak tersedia (model gagal / frame belum baru) dilewati -> gilirannya dipakai task berikutnya.
         // pose 2 (hanya jalan kalau ada orang yang belum punya wajah terdeteksi; kalau tidak, gilirannya dilewati).
         // Objek 2x (kotak orang = penjaga agar semua orang tetap punya filter), zoom wajah jauh 2x.
-        const VISION_PLAN = ['hand', 'face', 'objects', 'hand', 'crop', 'pose', 'farHand', 'hand', 'face', 'objects', 'hand', 'pose', 'crop', 'farHand'];
-        const lastVideoTimeFor = { hand: -1, face: -1, objects: -1 };
+        const VISION_PLAN = ['hand', 'face', 'crop', 'hand', 'crop', 'pose', 'farHand', 'hand', 'face', 'crop', 'hand', 'pose', 'crop', 'farHand'];
+        const lastVideoTimeFor = { hand: -1, face: -1 };
         let planIdx = 0, visionPending = false, visionMs = 0, cropTick = 0;
         const visionChannel = new MessageChannel();
         visionChannel.port1.onmessage = () => { visionPending = false; runVision(performance.now()); };
@@ -2174,13 +2118,6 @@
                     lastVideoTimeFor.face = video.currentTime;
                     const r = faceLandmarker.detectForVideo(video, nextVisionTs());
                     updateFaces((r && r.faceLandmarks) || [], 'full');
-                    return true;
-                }
-                if (task === 'objects') {
-                    if (!objectDetector || video.currentTime === lastVideoTimeFor.objects) return false;
-                    lastVideoTimeFor.objects = video.currentTime;
-                    const r = objectDetector.detectForVideo(video, nextVisionTs());
-                    updateObjects((r && r.detections) || []);
                     return true;
                 }
                 if (task === 'crop') {
@@ -2534,6 +2471,281 @@
             ctx.restore();
         }
 
+        // ================== AI WORKERS (deteksi objek + segmentasi background) ==================
+        // Jalan di thread terpisah dengan delegate CPU, jadi:
+        //  - tidak mengambil waktu render / AI lain di main thread (preview tetap smooth)
+        //  - tidak terkena bug delegate GPU EfficientDet yang mengembalikan 0 objek tanpa error
+        // Frame dikirim sebagai ImageBitmap kecil (dikecilkan browser), hanya kalau worker sedang tidak sibuk.
+        const VISION_WORKER_SRC = `
+let task = null, kind = '';
+self.onmessage = async e => {
+    const m = e.data;
+    if (m.type === 'init') {
+        try {
+            const v = await import(m.visionUrl + '/vision_bundle.mjs');
+            const fs = await v.FilesetResolver.forVisionTasks(m.visionUrl + '/wasm');
+            kind = m.kind;
+            const base = { modelAssetPath: m.model, delegate: 'CPU' };
+            task = kind === 'objects'
+                ? await v.ObjectDetector.createFromOptions(fs, { baseOptions: base, runningMode: 'IMAGE', scoreThreshold: m.score, maxResults: m.max })
+                : await v.ImageSegmenter.createFromOptions(fs, { baseOptions: base, runningMode: 'IMAGE', outputConfidenceMasks: true, outputCategoryMask: false });
+            postMessage({ type: 'ready' });
+        } catch (err) { postMessage({ type: 'error', fatal: true, error: String((err && err.message) || err) }); }
+        return;
+    }
+    if (m.type !== 'frame') return;
+    const t0 = performance.now();
+    try {
+        if (kind === 'objects') {
+            const r = task.detect(m.bitmap);
+            const dets = (r.detections || []).filter(d => d.boundingBox && d.categories && d.categories[0]).map(d => ({
+                label: d.categories[0].categoryName || d.categories[0].displayName || 'object', score: d.categories[0].score,
+                x: d.boundingBox.originX, y: d.boundingBox.originY, w: d.boundingBox.width, h: d.boundingBox.height }));
+            postMessage({ type: 'objects', ms: performance.now() - t0, dets });
+        } else {
+            const r = task.segment(m.bitmap);
+            const mk = r.confidenceMasks[0], a = mk.getAsFloat32Array(), out = new Uint8ClampedArray(a.length);
+            for (let i = 0; i < a.length; i++) out[i] = a[i] * 255;
+            const w = mk.width, h = mk.height;
+            if (r.close) r.close();
+            postMessage({ type: 'mask', ms: performance.now() - t0, w, h, data: out.buffer }, [out.buffer]);
+        }
+    } catch (err) { postMessage({ type: 'error', error: String((err && err.message) || err) }); }
+    finally { if (m.bitmap && m.bitmap.close) m.bitmap.close(); }
+};`;
+
+        function createVisionWorker(kind, model, inputW, intervalMs, onResult, extra = {}) {
+            const vw = {
+                kind, ready: false, failed: false, busy: false, lastSent: 0, ms: 0, inputW, intervalMs, worker: null,
+                close() { if (this.worker) this.worker.terminate(); this.worker = null; this.ready = false; }
+            };
+            try {
+                const url = URL.createObjectURL(new Blob([VISION_WORKER_SRC], { type: 'text/javascript' }));
+                vw.worker = new Worker(url);
+                URL.revokeObjectURL(url);
+            } catch (e) {
+                console.error(`${kind} worker tidak bisa dibuat`, e);
+                vw.failed = true;
+                return vw;
+            }
+            vw.worker.onmessage = e => {
+                const m = e.data;
+                if (m.type === 'ready') { vw.ready = true; updateStats(); return; }
+                if (m.type === 'error') {
+                    vw.busy = false;
+                    console.error(`${kind} worker error:`, m.error);
+                    if (m.fatal) { vw.failed = true; vw.close(); updateStats(); }
+                    return;
+                }
+                vw.busy = false;
+                vw.ms = vw.ms ? vw.ms * 0.85 + m.ms * 0.15 : m.ms;
+                try { onResult(m); } catch (err) { console.warn(`${kind} result handling failed`, err); }
+            };
+            vw.worker.onerror = e => { console.error(`${kind} worker crashed`, e.message); vw.failed = true; vw.busy = false; vw.close(); updateStats(); };
+            vw.worker.postMessage({ type: 'init', kind, model, visionUrl: VISION_URL, ...extra });
+            return vw;
+        }
+
+        // Kirim frame terbaru ke worker kalau worker siap & tidak sibuk (frame lama tidak pernah menumpuk)
+        function feedWorker(vw, now) {
+            if (!vw || !vw.ready || vw.busy || !vw.worker || now - vw.lastSent < vw.intervalMs) return;
+            const vW = video.videoWidth, vH = video.videoHeight;
+            if (!vW || video.readyState < 2) return;
+            vw.busy = true;
+            vw.lastSent = now;
+            const w = Math.min(vW, vw.inputW), h = Math.round(w * vH / vW);
+            createImageBitmap(video, { resizeWidth: w, resizeHeight: h, resizeQuality: 'medium' })
+                .then(bitmap => {
+                    if (!vw.worker) { bitmap.close(); return; }
+                    vw.frameW = w; vw.frameH = h; vw.srcW = vW; vw.srcH = vH;
+                    vw.worker.postMessage({ type: 'frame', bitmap }, [bitmap]);
+                })
+                .catch(() => { vw.busy = false; });
+        }
+
+        // ---- Objek ----
+        let objectWorker = null;
+        function startObjectWorker() {
+            if (!CFG.OBJECT_DETECTION || objectWorker) return;
+            objectWorker = createVisionWorker('objects', OBJECT_MODEL, CFG.OBJECT_INPUT_W, CFG.OBJECT_INTERVAL_MS, m => {
+                // koordinat frame kecil -> piksel video asli, lalu format yang sama seperti hasil MediaPipe
+                const k = objectWorker.srcW / objectWorker.frameW;
+                updateObjects(m.dets.map(d => ({ categories: [{ categoryName: d.label, score: d.score }],
+                    boundingBox: { originX: d.x * k, originY: d.y * k, width: d.w * k, height: d.h * k } })));
+            }, { score: Math.min(CFG.OBJECT_SCORE, CFG.PERSON_SCORE), max: CFG.OBJECT_MAX });
+            // objectDetector dipakai di beberapa tempat sebagai tanda "detektor objek siap"
+            objectDetector = { get ready() { return objectWorker.ready; }, close: () => objectWorker.close() };
+        }
+
+        // ---- Segmentasi background ----
+        let segWorker = null, segMask = null, segMaskCanvas = null, segMaskCtx = null, segMaskData = null, segMaskAt = 0;
+        let bgEnabled = CFG.BACKGROUND;
+        function startSegWorker() {
+            if (segWorker) return;
+            segWorker = createVisionWorker('segment', SEG_MODEL, CFG.SEG_INPUT_W, CFG.SEG_INTERVAL_MS, m => {
+                const cur = new Uint8ClampedArray(m.data), n = m.w * m.h;
+                if (!segMaskCanvas || segMaskCanvas.width !== m.w || segMaskCanvas.height !== m.h) {
+                    segMaskCanvas = document.createElement('canvas');
+                    segMaskCanvas.width = m.w; segMaskCanvas.height = m.h;
+                    segMaskCtx = segMaskCanvas.getContext('2d');
+                    segMaskData = segMaskCtx.createImageData(m.w, m.h);
+                    segMask = new Float32Array(n);
+                    for (let i = 0; i < n; i++) segMask[i] = cur[i] / 255;
+                }
+                // Halus di tepi (smoothstep) + campur dengan mask sebelumnya (tepi rambut/badan tidak kedip)
+                const lo = CFG.SEG_LOW, span = CFG.SEG_HIGH - CFG.SEG_LOW, keep = CFG.SEG_KEEP, px = segMaskData.data;
+                for (let i = 0; i < n; i++) {
+                    const v = segMask[i] = segMask[i] * keep + (cur[i] / 255) * (1 - keep);
+                    let a = (v - lo) / span;
+                    a = a <= 0 ? 0 : a >= 1 ? 1 : a * a * (3 - 2 * a);
+                    px[i * 4 + 3] = (1 - a) * 255;          // disimpan terbalik: alpha = area background
+                }
+                segMaskCtx.putImageData(segMaskData, 0, 0);
+                segMaskAt = performance.now();
+            });
+        }
+
+        // Background baru dipakai kalau mask masih segar (worker mati / macet -> kembali ke kamera asli, tidak freeze)
+        function backgroundActive(now) {
+            return bgEnabled && !!segMaskCanvas && !!bgSource && now - segMaskAt < 1000;
+        }
+
+        // ---- Gambar background ----
+        // Disusun agar cocok untuk photobooth: langit gradasi biru BINUS di atas, gambar gedung di bawah (lebar penuh).
+        // Area putih pada gambar ikut menjadi langit (blend multiply), jadi gambar ber-background putih tetap menyatu.
+        let bgSource = null, bgCanvas = null, bgCanvasKey = '';
+        const bgStatEl = document.getElementById('st_bg');
+        const bgBtn = document.getElementById('bg_btn');
+        const bgFileEl = document.getElementById('bg_file');
+
+        function canvasSafe(img) {
+            // Gambar dari file:// lain dianggap beda origin -> canvas "tainted" -> foto tidak bisa disimpan. Cek dulu.
+            try { const c = document.createElement('canvas'); c.width = c.height = 1; const g = c.getContext('2d'); g.drawImage(img, 0, 0, 1, 1); g.getImageData(0, 0, 1, 1); return true; }
+            catch (_) { return false; }
+        }
+
+        function loadImage(src) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = () => reject(new Error('gambar tidak bisa dibaca'));
+                img.src = src;
+            });
+        }
+
+        async function useBackgroundBlob(blob, remember) {
+            const url = URL.createObjectURL(blob);
+            try {
+                const img = await loadImage(url);
+                bgSource = img; bgCanvasKey = '';
+                if (remember) await kv('readwrite', s => s.put(blob, 'bgImage')).catch(e => console.warn('Background tidak bisa diingat', e));
+                return true;
+            } catch (e) {
+                URL.revokeObjectURL(url);
+                throw e;
+            }
+        }
+
+        async function loadBackground() {
+            // 1. gambar yang pernah dipilih lewat tombol BACKGROUND (disimpan di browser)
+            try {
+                const saved = await kv('readonly', s => s.get('bgImage'));
+                if (saved instanceof Blob && await useBackgroundBlob(saved, false)) return 'saved';
+            } catch (_) { /* lanjut */ }
+            // 2. assets/background.png di folder aplikasi
+            try {
+                const img = await loadImage(CFG.BG_IMAGE);
+                if (canvasSafe(img)) { bgSource = img; bgCanvasKey = ''; return 'file'; }
+                console.warn(`${CFG.BG_IMAGE} tidak bisa dipakai di file:// (canvas tainted). Pakai tombol BACKGROUND: GAMBAR atau jalankan lewat server lokal.`);
+            } catch (_) { /* tidak ada file */ }
+            // 3. background bawaan (gradasi + siluet gedung)
+            bgSource = 'default'; bgCanvasKey = '';
+            return 'default';
+        }
+
+        function buildBackground(pw, ph) {
+            const key = `${pw}x${ph}:${bgSource === 'default' ? 'd' : bgSource.src}`;
+            if (bgCanvas && bgCanvasKey === key) return bgCanvas;
+            bgCanvas = bgCanvas || document.createElement('canvas');
+            bgCanvas.width = pw; bgCanvas.height = ph;
+            const g = bgCanvas.getContext('2d');
+            const sky = g.createLinearGradient(0, 0, 0, ph);
+            sky.addColorStop(0, '#1e5bd8'); sky.addColorStop(0.32, '#6fa8f5'); sky.addColorStop(0.62, '#e4f0ff'); sky.addColorStop(1, '#ffffff');
+            g.fillStyle = sky; g.fillRect(0, 0, pw, ph);
+            const glow = g.createRadialGradient(pw * 0.5, ph * 0.18, 0, pw * 0.5, ph * 0.18, pw * 0.55);
+            glow.addColorStop(0, 'rgba(255,255,255,0.45)'); glow.addColorStop(1, 'rgba(255,255,255,0)');
+            g.fillStyle = glow; g.fillRect(0, 0, pw, ph);
+            if (bgSource && bgSource !== 'default') {
+                // Lebar penuh, menempel di bawah (gedung tetap utuh, sisa atas = langit)
+                const img = bgSource, s = Math.max(pw / img.naturalWidth, (ph * 0.55) / img.naturalHeight);
+                const w = img.naturalWidth * s, h = img.naturalHeight * s;
+                g.globalCompositeOperation = 'multiply';
+                g.drawImage(img, (pw - w) / 2, ph - h, w, h);
+                g.globalCompositeOperation = 'source-over';
+            } else {
+                // Siluet gedung sederhana
+                g.fillStyle = 'rgba(16,58,150,0.85)';
+                const blocks = [[0.08, 0.42, 0.07], [0.16, 0.32, 0.08], [0.25, 0.48, 0.06], [0.33, 0.28, 0.12], [0.47, 0.36, 0.1],
+                                [0.58, 0.3, 0.07], [0.66, 0.24, 0.09], [0.76, 0.4, 0.06], [0.83, 0.33, 0.08]];
+                blocks.forEach(([x, top, w]) => g.fillRect(pw * x, ph * (0.55 + top * 0.6), pw * w, ph));
+                g.fillStyle = '#ffffff';
+                g.fillRect(0, ph * 0.93, pw, ph * 0.07);
+            }
+            bgCanvasKey = key;
+            return bgCanvas;
+        }
+
+        // Gabungkan: kamera dulu (resolusi penuh, orang tetap tajam), lalu lapisan background yang dilubangi bentuk orang
+        // (mask terbalik). Lapisan background cukup setengah resolusi untuk preview (gambar background-nya sendiri
+        // tidak lebih tajam dari itu) -> 4x lebih ringan; untuk foto pakai resolusi penuh.
+        // m = transform layar -> piksel target, layerScale = resolusi lapisan background relatif ke target.
+        const bgLayer = document.createElement('canvas');
+        const bgLayerCtx = bgLayer.getContext('2d');
+        function drawCameraWithBackground(target, m, pw, ph, layerScale) {
+            target.save();
+            target.translate(W, 0); target.scale(-1, 1);
+            target.drawImage(video, layout.ox, layout.oy, layout.dw, layout.dh);
+            target.restore();
+            const lw = Math.max(2, Math.round(pw * layerScale)), lh = Math.max(2, Math.round(ph * layerScale));
+            if (bgLayer.width !== lw || bgLayer.height !== lh) { bgLayer.width = lw; bgLayer.height = lh; }
+            const g = bgLayerCtx;
+            g.setTransform(1, 0, 0, 1, 0, 0);
+            g.globalCompositeOperation = 'source-over';
+            g.clearRect(0, 0, lw, lh);
+            const k = lw / pw;
+            g.setTransform(m[0] * k, m[1] * k, m[2] * k, m[3] * k, m[4] * k, m[5] * k);
+            g.save(); g.translate(W, 0); g.scale(-1, 1);
+            g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'medium';
+            g.drawImage(segMaskCanvas, layout.ox, layout.oy, layout.dw, layout.dh);       // alpha = BUKAN orang, posisi = video
+            g.restore();
+            g.setTransform(1, 0, 0, 1, 0, 0);
+            g.globalCompositeOperation = 'source-in';
+            g.drawImage(buildBackground(lw, lh), 0, 0);                                      // TIDAK di-mirror: tulisan tetap terbaca
+            g.globalCompositeOperation = 'source-over';
+            target.save();
+            target.setTransform(1, 0, 0, 1, 0, 0);
+            target.imageSmoothingEnabled = true;
+            target.drawImage(bgLayer, 0, 0, pw, ph);
+            target.restore();
+        }
+
+        function updateBgStat() {
+            const name = !bgSource ? 'LOADING...' : bgSource === 'default' ? 'BAWAAN' : 'GAMBAR';
+            const seg = segWorker && segWorker.failed ? 'UNAVAILABLE' : !segWorker || !segWorker.ready ? 'LOADING...' : bgEnabled ? `ON // ${name}` : `OFF // ${name}`;
+            bgStatEl.textContent = seg;
+            bgStatEl.className = bgEnabled && segWorker && segWorker.ready ? 'on' : 'off';
+        }
+
+        bgBtn.addEventListener('click', e => { e.currentTarget.blur(); bgFileEl.click(); });
+        bgFileEl.addEventListener('change', async () => {
+            const f = bgFileEl.files && bgFileEl.files[0];
+            bgFileEl.value = '';
+            if (!f) return;
+            try { await useBackgroundBlob(f, true); bgEnabled = true; toast('BACKGROUND DIGANTI & DIINGAT'); }
+            catch (err) { console.error(err); toast('GAMBAR TIDAK BISA DIPAKAI'); }
+            updateStats();
+        });
+
         // ================== MAIN LOOP ==================
         let lastFrame = performance.now(), fps = 0;
         function frame(now) {
@@ -2550,7 +2762,8 @@
             const faces = faceGeoms();
             const g = detectGesture(faces);
             processGesture(g, dtMs);
-            updatePartyAnchor(faces);
+            feedWorker(objectWorker, now);
+            if (bgEnabled) feedWorker(segWorker, now);
             // Selama sign F masih ditahan, tulisan tetap tampil
             if (g && g.type === 'binus' && gest.latched === 'binus') party.until = Math.max(party.until, now + 1500);
 
@@ -2574,10 +2787,15 @@
             try {
                 const t = now / 1000;
                 ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
-                ctx.save();
-                ctx.translate(W, 0); ctx.scale(-1, 1);
-                ctx.drawImage(video, layout.ox, layout.oy, layout.dw, layout.dh);
-                ctx.restore();
+                if (backgroundActive(now)) {
+                    // preview: lapisan background 1/2 resolusi; foto (dt = 0): resolusi penuh
+                    drawCameraWithBackground(ctx, m, ctx.canvas.width, ctx.canvas.height, dt > 0 ? 0.5 : 1);
+                } else {
+                    ctx.save();
+                    ctx.translate(W, 0); ctx.scale(-1, 1);
+                    ctx.drawImage(video, layout.ox, layout.oy, layout.dw, layout.dh);
+                    ctx.restore();
+                }
 
                 // Aksesoris dipasang ke SEMUA wajah yang terdeteksi
                 faces.forEach(fg => {
@@ -2618,6 +2836,7 @@
             else if (e.key === 'ArrowLeft') cycleStyle(-1);
             else if (k === 'h') showSkeleton = !showSkeleton;
             else if (k === 'o') { showObjects = !showObjects; toast(showObjects ? 'OBJECT DETECTION: TAMPIL' : 'OBJECT DETECTION: SEMBUNYI'); updateObjectStat(); }
+            else if (k === 'g') { bgEnabled = !bgEnabled; toast(bgEnabled ? 'BACKGROUND: ON' : 'BACKGROUND: OFF (KAMERA ASLI)'); updateStats(); }
             else if (k === 'x') {
                 Object.keys(active).forEach(a => { active[a] = false; });
                 hearts.length = 0;
@@ -2630,7 +2849,7 @@
         window.addEventListener('pagehide', () => {
             const s = video.srcObject;
             if (s) s.getTracks().forEach(tr => tr.stop());
-            [handLandmarker, farHandLandmarker, faceLandmarker, farLandmarker, objectDetector, poseLandmarker].forEach(l => { try { if (l) l.close(); } catch (_) { /* ignore */ } });
+            [handLandmarker, farHandLandmarker, faceLandmarker, farLandmarker, objectDetector, segWorker, poseLandmarker].forEach(l => { try { if (l) l.close(); } catch (_) { /* ignore */ } });
             if (photoUrl) URL.revokeObjectURL(photoUrl);
         });
 
@@ -2638,10 +2857,12 @@
         updateStats();
         requestAnimationFrame(frame);
         startCamera().catch(err => { console.error(err); modeEl.textContent = 'CAMERA_ERROR: ' + cameraErrorText(err); });
+        // Worker objek & background mulai bersamaan dengan model lain (thread terpisah, saling tidak menunggu)
+        startObjectWorker();
+        startSegWorker();
+        loadBackground().then(src => { console.info('Background:', src); updateStats(); });
         initVision().catch(err => {
             console.error(err);
-            objectLoadFailed = !objectDetector;
-            updateObjectStat();
             modeEl.textContent = 'VISION_ERROR: ' + ((err && err.message) || err);
         });
     </script>
